@@ -11,7 +11,7 @@ export async function fetchConfig(): Promise<ConfigResponse> {
  * （EventSource は GET しか使えないので、fetch のストリームを自前で読む）
  */
 export async function streamChat(
-  pattern: ChatRequest["pattern"],
+  settings: Pick<ChatRequest, "topology" | "pattern">,
   messages: ChatRequest["messages"],
   onEvent: (event: ChatEvent) => void,
   signal: AbortSignal,
@@ -19,7 +19,7 @@ export async function streamChat(
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ pattern, messages } satisfies ChatRequest),
+    body: JSON.stringify({ ...settings, messages } satisfies ChatRequest),
     signal,
   });
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}: ${await res.text()}`);

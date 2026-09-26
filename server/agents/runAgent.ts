@@ -1,29 +1,61 @@
 import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
-import type { BetaMessage, BetaMessageParam, ModelClient } from "../llm/types.js";
-import { connectPeers, type PeerConnection } from "../patterns/index.js";
+import type { Via } from "../../shared/protocol.js";
+import type { BetaMessage, BetaMessageParam, BetaTool, ModelClient } from "../llm/types.js";
+import { connectPeers } from "../patterns/index.js";
 import type { RunContext } from "../runs.js";
-import { AGENTS, MAX_DEPTH, agentIdFromToolName, modelFor, type AgentId } from "./definitions.js";
+import { AGENTS, MAX_DEPTH, agentIdFromToolName, modelFor, systemFor, type AgentId } from "./definitions.js";
 
 /** 1 つのエージェントがモデルを呼ぶ最大回数（ツール呼び出しのループ上限） */
 const MAX_TURNS = 8;
+
+type ToolUse = Anthropic.Beta.BetaToolUseBlock;
+type ToolResult = Anthropic.Beta.BetaToolResultBlockParam;
+
+/**
+ * エージェントに持たせる道具箱。連携パターンごとに中身が違う。
+ * - 呼び出し: call_<id>（相手エージェントを実行して結果を返す）
+ * - ハンドオフ: transfer_to_<id>（引き継ぎ先を記録して、ループを止める）
+ * - Pub/Sub:   publish_event（イベントを発行するだけ。誰が処理するかは知らない）
+ */
+export interface Toolbox {
+  tools: BetaTool[];
+  run(toolUse: ToolUse): Promise<{ content: string; isError?: boolean }>;
+  /** true を返したら、このターンでループを終える（ハンドオフ用） */
+  shouldStop?(): boolean;
+  close?(): Promise<void>;
+}
+
+export interface RunOptions {
+  /** 起動のされ方（トレース表示用）。省略時は ctx から決める */
+  via?: Via;
+  /** ハンドオフで引き継いだ場合の、前の担当者の callId */
+  handoffFrom?: string;
+  /** 道具箱を作る関数。省略時は「呼び出し」パターンの道具箱（ctx.pattern で接続） */
+  toolbox?: (callId: string) => Promise<Toolbox | undefined>;
+}
+
+export interface AgentResult {
+  callId: string;
+  text: string;
+}
 
 /**
  * エージェントを 1 回実行し、最終回答のテキストを返す。
  *
  * ループの中身:
- *   0. 呼び出せる相手に接続する（direct / MCP / A2A のどれで繋ぐかは ctx.pattern で決まる）
- *   1. モデルを呼ぶ（呼べる他エージェントを `call_<id>` ツールとして渡す）
- *   2. 返答に tool_use があれば、接続を通して相手エージェントを実行する
- *      （同じターンに複数あれば Promise.all で並列実行）
+ *   0. 道具箱を用意する（呼び出しパターンなら direct / MCP / A2A で相手に接続）
+ *   1. モデルを呼ぶ
+ *   2. 返答に tool_use があれば、道具箱で実行する（同じターンに複数あれば並列）
  *   3. 結果を tool_result として会話に追加し、1 に戻る
- *   4. tool_use がなくなったら、そのテキストが最終回答
+ *   4. tool_use がなくなったら（またはハンドオフしたら）、そのテキストが最終回答
  */
 export async function runAgent(
   agentId: AgentId,
   messages: BetaMessageParam[],
   ctx: RunContext,
-): Promise<string> {
+  options: RunOptions = {},
+): Promise<AgentResult> {
   const def = AGENTS[agentId];
   const model = modelFor(agentId);
   const callId = randomUUID();
@@ -38,26 +70,25 @@ export async function runAgent(
     model,
     task: lastUserText(messages),
     depth: ctx.depth,
-    via: ctx.depth === 0 ? "direct" : ctx.pattern,
+    via: options.via ?? (ctx.depth === 0 ? "direct" : ctx.pattern),
+    handoffFrom: options.handoffFrom,
   });
 
   const history = [...messages];
   let finalText = "";
   let isError = false;
-  let peers: PeerConnection | undefined;
+  let toolbox: Toolbox | undefined;
 
   try {
-    // 深さの上限に達したら、それ以上他のエージェントを呼べないようにする
-    if (def.canCall.length > 0 && ctx.depth < MAX_DEPTH) peers = await connectPeers(def, callId, ctx);
-    const tools = peers?.tools ?? [];
+    toolbox = await (options.toolbox ?? ((id) => callToolbox(agentId, id, ctx)))(callId);
 
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       ctx.emit({ type: "turn_start", callId, turn });
       const message = await callWithRetry(ctx, {
         model,
-        system: def.system,
+        system: systemFor(def, ctx.topology),
         messages: history,
-        tools,
+        tools: toolbox?.tools ?? [],
         effort: def.effort,
         onText: (delta) => ctx.emit({ type: "text", callId, turn, delta }),
         signal: ctx.signal,
@@ -73,18 +104,19 @@ export async function runAgent(
 
       const content = contentForHistory(message.content);
       finalText = content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-      const toolUses = content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
+      const toolUses = content.filter((b): b is ToolUse => b.type === "tool_use");
 
-      if (toolUses.length === 0) break;
+      if (toolUses.length === 0 || !toolbox) break;
       // 途中で切れたツール入力は信用できないので実行しない
       if (message.stop_reason === "max_tokens") throw new Error("出力が max_tokens で打ち切られました");
 
       history.push({ role: "assistant", content });
 
-      // ★ ここがエージェント間の呼び出し。tool_use 1 つ = 別エージェント 1 回の実行
-      const results = await Promise.all(toolUses.map((toolUse) => callSubAgent(toolUse, peers, callId, ctx)));
+      // ★ ツールの実行。呼び出しパターンでは、ここで別のエージェントが動く
+      const results = await Promise.all(toolUses.map((toolUse) => runTool(toolbox!, toolUse, callId, ctx)));
       history.push({ role: "user", content: results });
 
+      if (toolbox.shouldStop?.()) break;
       if (turn === MAX_TURNS - 1) finalText ||= "（ターン数の上限に達しました）";
     }
   } catch (err) {
@@ -92,37 +124,51 @@ export async function runAgent(
     finalText = `エラー: ${err instanceof Error ? err.message : String(err)}`;
     isError = true;
   } finally {
-    await peers?.close().catch(() => {});
+    await toolbox?.close?.().catch(() => {});
   }
 
   ctx.emit({ type: "agent_end", callId, output: finalText, isError, usage });
   if (isError && ctx.depth === 0) throw new Error(finalText);
-  return finalText;
+  return { callId, text: finalText };
 }
 
-/** tool_use を受けて、接続を通して相手エージェントを実行し tool_result を返す */
-async function callSubAgent(
-  toolUse: Anthropic.Beta.BetaToolUseBlock,
-  peers: PeerConnection | undefined,
-  callerCallId: string,
-  ctx: RunContext,
-): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
-  const target = agentIdFromToolName(toolUse.name);
-  const input = toolUse.input as { task?: unknown };
-  if (!peers || !target || typeof input?.task !== "string" || input.task.trim() === "") {
-    return { type: "tool_result", tool_use_id: toolUse.id, is_error: true, content: `不正な呼び出しです: ${JSON.stringify(toolUse.input)}` };
-  }
-
-  ctx.emit({ type: "tool_call", callId: callerCallId, toolUseId: toolUse.id, target, task: input.task });
-
+async function runTool(toolbox: Toolbox, toolUse: ToolUse, callId: string, ctx: RunContext): Promise<ToolResult> {
+  ctx.emit({ type: "tool_call", callId, toolUseId: toolUse.id, name: toolUse.name, input: toolUse.input });
+  let result: { content: string; isError?: boolean };
   try {
-    // サブエージェントは呼び出し元の会話履歴を知らない。渡すのは task だけ
-    const { text, isError } = await peers.call(target, input.task);
-    return { type: "tool_result", tool_use_id: toolUse.id, is_error: isError || undefined, content: text || "（空の応答）" };
+    result = await toolbox.run(toolUse);
   } catch (err) {
     if (ctx.signal.aborted) throw err;
-    return { type: "tool_result", tool_use_id: toolUse.id, is_error: true, content: String(err) };
+    result = { content: String(err), isError: true };
   }
+  ctx.emit({ type: "tool_result", callId, toolUseId: toolUse.id, content: result.content, isError: !!result.isError });
+  return { type: "tool_result", tool_use_id: toolUse.id, is_error: result.isError || undefined, content: result.content };
+}
+
+/**
+ * 「呼び出し」パターンの道具箱。
+ * 呼べる相手に direct / MCP / A2A で接続し、call_<id> ツールとして見せる。
+ */
+async function callToolbox(agentId: AgentId, callId: string, ctx: RunContext): Promise<Toolbox | undefined> {
+  const def = AGENTS[agentId];
+  // 深さの上限に達したら、それ以上他のエージェントを呼べないようにする
+  if (def.call.canCall.length === 0 || ctx.depth >= MAX_DEPTH) return undefined;
+  const peers = await connectPeers(def, callId, ctx);
+
+  return {
+    tools: peers.tools,
+    async run(toolUse) {
+      const target = agentIdFromToolName(toolUse.name);
+      const input = toolUse.input as { task?: unknown };
+      if (!target || typeof input?.task !== "string" || input.task.trim() === "") {
+        return { content: `不正な呼び出しです: ${JSON.stringify(toolUse.input)}`, isError: true };
+      }
+      // サブエージェントは呼び出し元の会話履歴を知らない。渡すのは task だけ
+      const { text, isError } = await peers.call(target, input.task);
+      return { content: text || "（空の応答）", isError };
+    },
+    close: () => peers.close(),
+  };
 }
 
 /**

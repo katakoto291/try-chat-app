@@ -47,8 +47,8 @@ function createMcpServer(): McpServer {
         const ctx = contextFromMeta(extra._meta?.[TRACE_META_KEY]);
         if (!ctx) return { isError: true, content: [{ type: "text", text: "トレース情報がありません" }] };
 
-        const output = await runAgent(def.id, [{ role: "user", content: task }], ctx);
-        return { content: [{ type: "text", text: output }] };
+        const { text } = await runAgent(def.id, [{ role: "user", content: task }], ctx);
+        return { content: [{ type: "text", text }] };
       },
     );
   }
@@ -82,7 +82,7 @@ export async function connectMcp(caller: AgentDefinition, callerCallId: string, 
   await client.connect(transport);
 
   // tools/list でサーバーが公開しているツールを知る。どれを使わせるかはホスト（呼び出し側）の方針
-  const allowed = new Set(caller.canCall.map(toolNameFor));
+  const allowed = new Set(caller.call.canCall.map(toolNameFor));
   const { tools } = await client.listTools();
 
   return {

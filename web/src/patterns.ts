@@ -1,4 +1,4 @@
-import type { CallPattern } from "../../shared/protocol";
+import type { CallPattern, Topology } from "../../shared/protocol";
 
 export interface PatternInfo {
   id: CallPattern;
@@ -47,3 +47,52 @@ export const PATTERNS: PatternInfo[] = [
 ];
 
 export const patternInfo = (id: CallPattern) => PATTERNS.find((p) => p.id === id) ?? PATTERNS[0];
+
+export interface TopologyInfo {
+  id: Topology;
+  label: string;
+  summary: string;
+  steps: string[];
+}
+
+export const TOPOLOGIES: TopologyInfo[] = [
+  {
+    id: "call",
+    label: "呼び出し",
+    summary: "司令塔が子エージェントを呼び、結果が戻ってくる（下のプロトコルで通信方式を選ぶ）",
+    steps: [],
+  },
+  {
+    id: "handoff",
+    label: "ハンドオフ",
+    summary: "担当者が会話ごと次の担当者に引き継ぐ。結果は戻らず、主導権が移る",
+    steps: [
+      "担当者は transfer_to_<相手> ツールを呼ぶと、その時点で自分の番を終える",
+      "次の担当者には、会話全体と「引き継ぎメモ」が渡される（呼び出しは task だけだった）",
+      "最後の担当者が、ユーザーに直接答える",
+    ],
+  },
+  {
+    id: "pubsub",
+    label: "Pub/Sub",
+    summary: "イベントを発行し、購読しているエージェントが反応する。発行者は処理する相手を知らない",
+    steps: [
+      "司令塔は publish_event でトピックにイベントを投げるだけ（宛先は指定しない）",
+      "そのトピックを購読しているエージェントに配送され、結果がまた別のトピックに発行される（連鎖）",
+      "司令塔は結果のトピックを購読しておき、イベントが出尽くしたらまとめて回答する",
+    ],
+  },
+];
+
+export const topologyInfo = (id: Topology) => TOPOLOGIES.find((t) => t.id === id) ?? TOPOLOGIES[0];
+
+export type Transport = "sse" | "agui";
+
+export const TRANSPORTS: { id: Transport; label: string; summary: string }[] = [
+  { id: "sse", label: "独自 SSE", summary: "このアプリ専用の形式のイベントを SSE で受け取る" },
+  {
+    id: "agui",
+    label: "AG-UI",
+    summary: "AG-UI の標準イベント（TEXT_MESSAGE_* / SUBAGENT_* など）で受け取る。公式クライアント HttpAgent を使用",
+  },
+];

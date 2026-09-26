@@ -1,4 +1,6 @@
-import type { AgentId, CallPattern, ChatEvent, WireMessage } from "../../shared/protocol";
+import type { BaseEvent } from "@ag-ui/core";
+import type { AgentId, CallPattern, ChatEvent, Topology, Via, WireMessage } from "../../shared/protocol";
+import type { Transport } from "./patterns";
 
 /** 1 回のエージェント呼び出し（トレースの木の 1 ノード） */
 export interface CallNode {
@@ -9,8 +11,10 @@ export interface CallNode {
   model: string;
   task: string;
   depth: number;
-  /** どの方式で呼び出されたか */
-  via: CallPattern;
+  /** どの方式で起動されたか */
+  via: Via;
+  /** ハンドオフで引き継いだ場合の、前の担当者 */
+  handoffFrom?: string;
   /** 親エージェントの何ターン目の呼び出しか */
   parentTurn: number;
   /** モデル呼び出しごとのテキスト */
@@ -32,20 +36,38 @@ export interface WireEntry extends WireMessage {
   callId: string;
 }
 
+/** AG-UI の生イベント 1 件（連続する *_CONTENT / *_ARGS は 1 行にまとめる） */
+export interface AguiEntry {
+  seq: number;
+  at: number;
+  type: string;
+  /** まとめた件数 */
+  count: number;
+  /** まとめる単位（messageId / toolCallId） */
+  key?: string;
+  event: Record<string, unknown>;
+}
+
 export interface Trace {
+  topology: Topology;
   pattern: CallPattern;
-  rootId: string | null;
+  transport: Transport;
+  /** 最上位のエージェント。ハンドオフや Pub/Sub の集約では複数になる */
+  rootIds: string[];
   calls: Record<string, CallNode>;
   /** エージェント間でやり取りされたメッセージ（時系列） */
   wires: WireEntry[];
+  /** AG-UI で受け取った生イベント（transport が agui のときだけ） */
+  agui: AguiEntry[];
   startedAt: number;
 }
 
-export const emptyTrace = (pattern: CallPattern): Trace => ({
-  pattern,
-  rootId: null,
+export const emptyTrace = (settings: { topology: Topology; pattern: CallPattern; transport: Transport }): Trace => ({
+  ...settings,
+  rootIds: [],
   calls: {},
   wires: [],
+  agui: [],
   startedAt: Date.now(),
 });
 
@@ -63,6 +85,7 @@ export function applyEvent(trace: Trace, ev: ChatEvent): Trace {
         task: ev.task,
         depth: ev.depth,
         via: ev.via,
+        handoffFrom: ev.handoffFrom,
         parentTurn: parent ? parent.turns.length - 1 : 0,
         turns: [],
         children: [],
@@ -71,7 +94,8 @@ export function applyEvent(trace: Trace, ev: ChatEvent): Trace {
       };
       const calls = { ...trace.calls, [ev.callId]: node };
       if (parent) calls[parent.callId] = { ...parent, children: [...parent.children, ev.callId] };
-      return { ...trace, rootId: trace.rootId ?? ev.callId, calls };
+      const rootIds = ev.parentCallId === null ? [...trace.rootIds, ev.callId] : trace.rootIds;
+      return { ...trace, rootIds, calls };
     }
     case "turn_start":
       return update(trace, ev.callId, (n) => ({ ...n, turns: [...n.turns, ""] }));
@@ -99,14 +123,29 @@ export function applyEvent(trace: Trace, ev: ChatEvent): Trace {
   }
 }
 
+/** AG-UI の生イベントを記録する。ストリーミングの断片は 1 行にまとめる */
+export function applyAguiEvent(trace: Trace, event: BaseEvent): Trace {
+  const e = event as unknown as Record<string, unknown>;
+  const key = (e.messageId ?? e.toolCallId) as string | undefined;
+  const last = trace.agui[trace.agui.length - 1];
+  const mergeable = event.type === "TEXT_MESSAGE_CONTENT" || event.type === "TOOL_CALL_ARGS";
+
+  if (mergeable && last && last.type === event.type && last.key === key) {
+    const merged = { ...last.event, delta: `${last.event.delta ?? ""}${e.delta ?? ""}` };
+    return { ...trace, agui: [...trace.agui.slice(0, -1), { ...last, count: last.count + 1, event: merged }] };
+  }
+  const entry: AguiEntry = { seq: trace.agui.length, at: Date.now() - trace.startedAt, type: event.type, count: 1, key, event: e };
+  return { ...trace, agui: [...trace.agui, entry] };
+}
+
 function update(trace: Trace, callId: string, fn: (n: CallNode) => CallNode): Trace {
   const node = trace.calls[callId];
   return node ? { ...trace, calls: { ...trace.calls, [callId]: fn(node) } } : trace;
 }
 
-/** チャット欄に表示する本文 = 司令塔の最新ターンのテキスト */
+/** チャット欄に表示する本文 = 最後の最上位エージェントの、最新ターンのテキスト */
 export function rootText(trace: Trace): string {
-  const root = trace.rootId ? trace.calls[trace.rootId] : undefined;
+  const root = trace.calls[trace.rootIds[trace.rootIds.length - 1]];
   if (!root) return "";
   if (root.output !== undefined) return root.output;
   return root.turns[root.turns.length - 1] ?? "";

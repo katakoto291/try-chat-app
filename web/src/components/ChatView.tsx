@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { CallPattern } from "../../../shared/protocol";
-import { PATTERNS, patternInfo } from "../patterns";
-import type { Message } from "../store";
+import { PATTERNS, TOPOLOGIES, TRANSPORTS, patternInfo, topologyInfo } from "../patterns";
+import type { Message, Settings } from "../store";
 import { Markdown } from "./Markdown";
 
 const EXAMPLES = [
@@ -14,8 +13,8 @@ const EXAMPLES = [
 interface Props {
   messages: Message[];
   streaming: boolean;
-  pattern: CallPattern;
-  onPatternChange: (p: CallPattern) => void;
+  settings: Settings;
+  onSettingsChange: (s: Settings) => void;
   selectedMessageId: string | null;
   onSend: (text: string) => void;
   onStop: () => void;
@@ -25,8 +24,8 @@ interface Props {
 export function ChatView({
   messages,
   streaming,
-  pattern,
-  onPatternChange,
+  settings,
+  onSettingsChange,
   selectedMessageId,
   onSend,
   onStop,
@@ -55,7 +54,8 @@ export function ChatView({
             <p className="muted">
               質問に応じて、司令塔エージェントが専門エージェントを呼び出します。
               <br />
-              下の「呼び出し方式」を切り替えて同じ質問を送ると、直接呼び出し・MCP・A2A の違いを比べられます。
+              下の設定を切り替えて同じ質問を送ると、連携パターン（呼び出し・ハンドオフ・Pub/Sub）や
+              プロトコル（直接・MCP・A2A）、画面との通信（独自 SSE・AG-UI）の違いを比べられます。
             </p>
             <div className="examples">
               {EXAMPLES.map((ex) => (
@@ -74,12 +74,12 @@ export function ChatView({
                 <div className="assistant-body">
                   {m.content ? <Markdown text={m.content} /> : m.pending && <span className="typing">考え中…</span>}
                   {m.error && <div className="error">⚠ {m.error}</div>}
-                  {m.trace?.rootId && (
+                  {m.trace && m.trace.rootIds.length > 0 && (
                     <button
                       className={`trace-chip ${selectedMessageId === m.id ? "active" : ""}`}
                       onClick={() => onSelectMessage(m.id)}
                     >
-                      🔗 {patternInfo(m.trace.pattern).label} · エージェント呼び出し {Object.keys(m.trace.calls).length} 回
+                      🔗 {traceLabel(m.trace)} · エージェント {Object.keys(m.trace.calls).length} 回
                       {m.pending ? "（実行中）" : ""} — トレースを見る
                     </button>
                   )}
@@ -91,23 +91,33 @@ export function ChatView({
         <div ref={bottomRef} />
       </div>
 
-      <div className="pattern-picker">
-        <span className="muted small">呼び出し方式</span>
-        <div className="segmented" role="radiogroup">
-          {PATTERNS.map((p) => (
-            <button
-              key={p.id}
-              role="radio"
-              aria-checked={pattern === p.id}
-              className={pattern === p.id ? "active" : ""}
-              disabled={streaming}
-              onClick={() => onPatternChange(p.id)}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-        <span className="muted small pattern-summary">{patternInfo(pattern).summary}</span>
+      <div className="settings">
+        <Segmented
+          label="連携パターン"
+          options={TOPOLOGIES}
+          value={settings.topology}
+          disabled={streaming}
+          onChange={(topology) => onSettingsChange({ ...settings, topology })}
+        />
+        <Segmented
+          label="プロトコル"
+          options={PATTERNS}
+          value={settings.pattern}
+          disabled={streaming || settings.topology !== "call"}
+          onChange={(pattern) => onSettingsChange({ ...settings, pattern })}
+        />
+        <Segmented
+          label="画面との通信"
+          options={TRANSPORTS}
+          value={settings.transport}
+          disabled={streaming}
+          onChange={(transport) => onSettingsChange({ ...settings, transport })}
+        />
+        <p className="muted small settings-summary">
+          {topologyInfo(settings.topology).summary}
+          {settings.topology === "call" && <> / {patternInfo(settings.pattern).summary}</>}
+          {settings.topology !== "call" && <>（プロトコルの選択は「呼び出し」のときだけ使います）</>}
+        </p>
       </div>
 
       <div className="composer">
@@ -134,5 +144,46 @@ export function ChatView({
         )}
       </div>
     </main>
+  );
+}
+
+function traceLabel(trace: NonNullable<Message["trace"]>): string {
+  const parts = [topologyInfo(trace.topology).label];
+  if (trace.topology === "call") parts.push(patternInfo(trace.pattern).label);
+  if (trace.transport === "agui") parts.push("AG-UI");
+  return parts.join(" / ");
+}
+
+function Segmented<T extends string>({
+  label,
+  options,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  options: { id: T; label: string }[];
+  value: T;
+  disabled: boolean;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="setting">
+      <span className="muted small">{label}</span>
+      <div className={`segmented ${disabled ? "disabled" : ""}`} role="radiogroup" aria-label={label}>
+        {options.map((o) => (
+          <button
+            key={o.id}
+            role="radio"
+            aria-checked={value === o.id}
+            className={value === o.id ? "active" : ""}
+            disabled={disabled}
+            onClick={() => onChange(o.id)}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

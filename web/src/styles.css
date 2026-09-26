@@ -472,15 +472,25 @@ button {
   }
 }
 
-/* ---------- 呼び出し方式の切り替え ---------- */
-.pattern-picker {
+/* ---------- 設定（連携パターン・プロトコル・画面との通信） ---------- */
+.settings {
   max-width: 760px;
   width: calc(100% - 32px);
   margin: 0 auto 8px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px 16px;
   flex-wrap: wrap;
+}
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.settings-summary {
+  flex-basis: 100%;
+  margin: 0;
+  line-height: 1.5;
 }
 .segmented {
   display: inline-flex;
@@ -489,11 +499,14 @@ button {
   padding: 2px;
   background: var(--bg-side);
 }
+.segmented.disabled {
+  opacity: 0.45;
+}
 .segmented button {
   border: none;
   background: none;
   border-radius: 999px;
-  padding: 2px 14px;
+  padding: 1px 12px;
   font-size: 13px;
   color: var(--muted);
 }
@@ -505,10 +518,6 @@ button {
 }
 .segmented button:disabled {
   cursor: default;
-}
-.pattern-summary {
-  flex: 1;
-  min-width: 200px;
 }
 
 .via {
@@ -527,6 +536,22 @@ button {
 }
 .via-a2a {
   color: var(--reviewer);
+}
+.via-handoff {
+  color: var(--writer);
+}
+.via-pubsub {
+  color: var(--coder);
+}
+.root-link {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  margin: 2px 0 8px;
+}
+.topics {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
 }
 
 /* ---------- トレースのタブ ---------- */
@@ -604,6 +629,18 @@ button {
 }
 .wire-event .wire-arrow {
   color: var(--writer);
+}
+.agui-text .wire-arrow {
+  color: var(--muted);
+}
+.agui-tool .wire-arrow {
+  color: var(--coder);
+}
+.agui-agent .wire-arrow {
+  color: var(--orchestrator);
+}
+.agui-run .wire-arrow {
+  color: var(--accent);
 }
 .wire-label {
   font-family: ui-monospace, Menlo, monospace;

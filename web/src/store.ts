@@ -1,4 +1,5 @@
-import type { CallPattern } from "../../shared/protocol";
+import type { CallPattern, Topology } from "../../shared/protocol";
+import type { Transport } from "./patterns";
 import type { Trace } from "./trace";
 
 export interface Message {
@@ -28,8 +29,17 @@ export function loadConversations(): Conversation[] {
     return list.map((c) => ({
       ...c,
       messages: c.messages.map((m) => {
-        // 古い形式のトレース（通信ログ導入前）を補う
-        const trace = m.trace && { ...m.trace, pattern: m.trace.pattern ?? "direct", wires: m.trace.wires ?? [] };
+        // 古い形式のトレースを補う
+        const old = m.trace as (Trace & { rootId?: string | null }) | undefined;
+        const trace = old && {
+          ...old,
+          topology: old.topology ?? "call",
+          pattern: old.pattern ?? "direct",
+          transport: old.transport ?? "sse",
+          rootIds: old.rootIds ?? (old.rootId ? [old.rootId] : []),
+          wires: old.wires ?? [],
+          agui: old.agui ?? [],
+        };
         return m.pending ? { ...m, trace, pending: false, error: m.error ?? "中断されました" } : { ...m, trace };
       }),
     }));
@@ -48,20 +58,27 @@ export function saveConversations(list: Conversation[]) {
 
 export const newId = () => crypto.randomUUID();
 
-const PATTERN_KEY = "try-chat-app:pattern";
+export interface Settings {
+  topology: Topology;
+  pattern: CallPattern;
+  transport: Transport;
+}
 
-export function loadPattern(): CallPattern {
+const SETTINGS_KEY = "try-chat-app:settings";
+const DEFAULT_SETTINGS: Settings = { topology: "call", pattern: "direct", transport: "sse" };
+
+export function loadSettings(): Settings {
   try {
-    const p = localStorage.getItem(PATTERN_KEY);
-    return p === "mcp" || p === "a2a" ? p : "direct";
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    return raw ? { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) } : DEFAULT_SETTINGS;
   } catch {
-    return "direct";
+    return DEFAULT_SETTINGS;
   }
 }
 
-export function savePattern(p: CallPattern) {
+export function saveSettings(settings: Settings) {
   try {
-    localStorage.setItem(PATTERN_KEY, p);
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {
     // 保存できなくても動作に支障はない
   }

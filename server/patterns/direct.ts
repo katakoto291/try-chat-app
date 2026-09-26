@@ -14,7 +14,7 @@ import { TASK_INPUT_SCHEMA, type PeerConnection } from "./types.js";
  */
 export async function connectDirect(caller: AgentDefinition, callerCallId: string, ctx: RunContext): Promise<PeerConnection> {
   return {
-    tools: caller.canCall.map((id) => ({
+    tools: caller.call.canCall.map((id) => ({
       name: toolNameFor(id),
       description: `${AGENTS[id].label}エージェントに仕事を依頼する。${AGENTS[id].description}`,
       input_schema: TASK_INPUT_SCHEMA,
@@ -26,7 +26,7 @@ export async function connectDirect(caller: AgentDefinition, callerCallId: strin
         ctx.emit({ type: "wire", callId: callerCallId, protocol: "direct", direction, label, url: "(同一プロセス内)", body });
 
       log("request", `runAgent("${target}", task)`, task);
-      const text = await runAgent(target, [{ role: "user", content: task }], {
+      const { text } = await runAgent(target, [{ role: "user", content: task }], {
         ...ctx,
         depth: ctx.depth + 1,
         parentCallId: callerCallId,

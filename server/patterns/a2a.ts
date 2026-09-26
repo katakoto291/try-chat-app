@@ -123,7 +123,7 @@ class SubAgentExecutor implements AgentExecutor {
     // 2) 作業中
     bus.publish(status(TaskState.TASK_STATE_WORKING));
     try {
-      const output = await runAgent(this.agentId, [{ role: "user", content: textOf(userMessage.parts) }], ctx);
+      const { text: output } = await runAgent(this.agentId, [{ role: "user", content: textOf(userMessage.parts) }], ctx);
       // 3) 成果物（Artifact）を返す
       bus.publish(
         AgentEvent.artifactUpdate({
@@ -206,7 +206,7 @@ export async function connectA2a(caller: AgentDefinition, callerCallId: string, 
 
   // 相手ごとに Agent Card を取得し（ディスカバリー）、それをもとにツールを作る
   const peers = await Promise.all(
-    caller.canCall.map(async (id) => {
+    caller.call.canCall.map(async (id) => {
       // 末尾の / がないと、相対パスの解決で最後の要素（id）が落ちてしまう
       const card = await resolver.resolve(`${ctx.baseUrl}/a2a/${id}/`);
       const client = await factory.createFromAgentCard(card);

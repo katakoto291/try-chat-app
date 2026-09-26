@@ -1,4 +1,4 @@
-import type { CallPattern, ChatEvent } from "../shared/protocol.js";
+import type { CallPattern, ChatEvent, Topology } from "../shared/protocol.js";
 import type { ModelClient } from "./llm/types.js";
 
 /**
@@ -13,6 +13,7 @@ import type { ModelClient } from "./llm/types.js";
  */
 export interface Run {
   runId: string;
+  topology: Topology;
   pattern: CallPattern;
   client: ModelClient;
   emit: (event: ChatEvent) => void;

@@ -1,19 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import type { CallPattern, ConfigResponse } from "../../shared/protocol";
+import type { ChatEvent, ConfigResponse } from "../../shared/protocol";
+import { streamChatAgui } from "./agui";
 import { fetchConfig, streamChat } from "./api";
 import { ChatView } from "./components/ChatView";
 import { Sidebar } from "./components/Sidebar";
 import { TracePanel } from "./components/TracePanel";
 import {
   loadConversations,
-  loadPattern,
+  loadSettings,
   newId,
   saveConversations,
-  savePattern,
+  saveSettings,
   type Conversation,
   type Message,
+  type Settings,
 } from "./store";
-import { applyEvent, emptyTrace, rootText } from "./trace";
+import { applyAguiEvent, applyEvent, emptyTrace, rootText } from "./trace";
 
 export function App() {
   const [conversations, setConversations] = useState<Conversation[]>(loadConversations);
@@ -22,14 +24,14 @@ export function App() {
   const [traceOpen, setTraceOpen] = useState(true);
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [streaming, setStreaming] = useState(false);
-  const [pattern, setPattern] = useState<CallPattern>(loadPattern);
+  const [settings, setSettings] = useState<Settings>(loadSettings);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetchConfig().then(setConfig).catch(() => setConfig(null));
   }, []);
   useEffect(() => saveConversations(conversations), [conversations]);
-  useEffect(() => savePattern(pattern), [pattern]);
+  useEffect(() => saveSettings(settings), [settings]);
 
   const active = conversations.find((c) => c.id === activeId);
   const selectedMessage = active?.messages.find((m) => m.id === selectedMessageId);
@@ -42,7 +44,7 @@ export function App() {
   async function send(text: string) {
     const conv: Conversation = active ?? { id: newId(), title: text.slice(0, 30), messages: [], updatedAt: Date.now() };
     const userMsg: Message = { id: newId(), role: "user", content: text };
-    const assistantMsg: Message = { id: newId(), role: "assistant", content: "", trace: emptyTrace(pattern), pending: true };
+    const assistantMsg: Message = { id: newId(), role: "assistant", content: "", trace: emptyTrace(settings), pending: true };
 
     // サーバーに送る履歴（エラーになった返答は除く）
     const history = [...conv.messages, userMsg]
@@ -58,19 +60,27 @@ export function App() {
     const controller = new AbortController();
     abortRef.current = controller;
     setStreaming(true);
+    const onEvent = (event: ChatEvent) =>
+      updateMessage(conv.id, assistantMsg.id, (m) => {
+        if (event.type === "error") return { ...m, error: event.message };
+        if (event.type === "done" || !m.trace) return m;
+        const trace = applyEvent(m.trace, event);
+        return { ...m, trace, content: rootText(trace) };
+      });
+
     try {
-      await streamChat(
-        pattern,
-        history,
-        (event) =>
-          updateMessage(conv.id, assistantMsg.id, (m) => {
-            if (event.type === "error") return { ...m, error: event.message };
-            if (event.type === "done") return m;
-            const trace = applyEvent(m.trace ?? emptyTrace(pattern), event);
-            return { ...m, trace, content: rootText(trace) };
-          }),
-        controller.signal,
-      );
+      if (settings.transport === "agui") {
+        await streamChatAgui(
+          settings,
+          history,
+          onEvent,
+          // AG-UI の生イベントも記録して、トレースの「AG-UI イベント」タブに出す
+          (raw) => updateMessage(conv.id, assistantMsg.id, (m) => (m.trace ? { ...m, trace: applyAguiEvent(m.trace, raw) } : m)),
+          controller.signal,
+        );
+      } else {
+        await streamChat(settings, history, onEvent, controller.signal);
+      }
     } catch (err) {
       const message = controller.signal.aborted ? "停止しました" : err instanceof Error ? err.message : String(err);
       updateMessage(conv.id, assistantMsg.id, (m) => ({ ...m, error: message }));
@@ -87,6 +97,7 @@ export function App() {
         conversations={conversations}
         activeId={activeId}
         config={config}
+        topology={settings.topology}
         onSelect={(id) => {
           setActiveId(id);
           setSelectedMessageId(null);
@@ -103,8 +114,8 @@ export function App() {
       <ChatView
         messages={active?.messages ?? []}
         streaming={streaming}
-        pattern={pattern}
-        onPatternChange={setPattern}
+        settings={settings}
+        onSettingsChange={setSettings}
         selectedMessageId={selectedMessageId}
         onSend={send}
         onStop={() => abortRef.current?.abort()}
