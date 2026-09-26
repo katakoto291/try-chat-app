@@ -32,7 +32,7 @@ export interface AgentDefinition {
   description: string;
   /** 役割（どのパターンでも共通のシステムプロンプト） */
   role: string;
-  /** 思考の深さ。サブエージェントは軽めにしてコストと待ち時間を抑える */
+  /** 思考の深さ。軽めにしてコストと待ち時間を抑える（対応していないモデルでは送らない） */
   effort?: "low" | "medium" | "high";
 
   /** 呼び出しパターン: 呼び出せる相手と、追加の指示 */
@@ -43,8 +43,14 @@ export interface AgentDefinition {
   pubsub: { subscribes: Topic[]; publishes: Topic[]; instructions: string };
 }
 
-const orchestratorModel = process.env.ORCHESTRATOR_MODEL || "claude-opus-5";
-const subagentModel = process.env.SUBAGENT_MODEL || "claude-opus-5";
+/**
+ * 使うモデル。コストを抑えるため、既定では
+ * - 司令塔: Claude Sonnet 5（振り分けと取りまとめに判断力が要る）
+ * - サブエージェント: Claude Haiku 4.5（いちばん安い）
+ * 環境変数で変えられる（例: 全部 claude-haiku-4-5 にするとさらに安い / claude-opus-5 にすると高品質）
+ */
+const orchestratorModel = process.env.ORCHESTRATOR_MODEL || "claude-sonnet-5";
+const subagentModel = process.env.SUBAGENT_MODEL || "claude-haiku-4-5";
 
 export function modelFor(id: AgentId): string {
   return id === "orchestrator" ? orchestratorModel : subagentModel;
@@ -59,6 +65,7 @@ export const AGENTS: Record<AgentId, AgentDefinition> = {
     label: "司令塔",
     description: "ユーザーと対話し、必要に応じて専門エージェントに仕事を振り分ける",
     role: "あなたはチャットアプリの司令塔エージェントです。ユーザーと日本語で対話します。簡単な質問や雑談には自分で直接答えてください。",
+    effort: "medium",
     call: {
       canCall: ["researcher", "writer", "coder"],
       instructions: [
