@@ -11,7 +11,7 @@ import { authEnabled } from "./auth.js";
 // npm run build 後は、ビルド済みのフロントエンドも配信する
 app.use("/*", serveStatic({ root: "./dist" }));
 
-const port = Number(process.env.PORT ?? 3000);
+const port = Number(process.env.PORT || 3000);
 serve({ fetch: app.fetch, port }, () => {
   console.log(`API server: http://localhost:${port}  (LLM_MODE=${client.mode}, ログイン: ${authEnabled ? "あり" : "なし"})`);
   if (client.mode === "mock") {

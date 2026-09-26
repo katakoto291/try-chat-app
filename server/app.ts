@@ -186,7 +186,20 @@ app.post("/a2a/:agent", async (c) => {
   return c.json(result);
 });
 
-/** Agent Card などに載せる、このサーバー自身の URL */
+/**
+ * Agent Card などに載せる、このサーバー自身の URL。
+ * SELF_URL が空・不正なときは、アクセスされた URL から決める
+ * （.env.example をそのまま使うと SELF_URL= が空文字で入るため）。
+ */
 function originOf(url: string): string {
-  return process.env.SELF_URL ?? new URL(url).origin;
+  for (const candidate of [process.env.SELF_URL?.trim(), url]) {
+    if (!candidate) continue;
+    try {
+      const origin = new URL(candidate).origin;
+      if (origin !== "null") return origin;
+    } catch {
+      // 不正な URL は無視して次の候補へ
+    }
+  }
+  return "http://localhost";
 }
