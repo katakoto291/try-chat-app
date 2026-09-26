@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import type { ConfigResponse } from "../../shared/protocol";
+import type { CallPattern, ConfigResponse } from "../../shared/protocol";
 import { fetchConfig, streamChat } from "./api";
 import { ChatView } from "./components/ChatView";
 import { Sidebar } from "./components/Sidebar";
 import { TracePanel } from "./components/TracePanel";
-import { loadConversations, newId, saveConversations, type Conversation, type Message } from "./store";
+import {
+  loadConversations,
+  loadPattern,
+  newId,
+  saveConversations,
+  savePattern,
+  type Conversation,
+  type Message,
+} from "./store";
 import { applyEvent, emptyTrace, rootText } from "./trace";
 
 export function App() {
@@ -14,12 +22,14 @@ export function App() {
   const [traceOpen, setTraceOpen] = useState(true);
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [streaming, setStreaming] = useState(false);
+  const [pattern, setPattern] = useState<CallPattern>(loadPattern);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetchConfig().then(setConfig).catch(() => setConfig(null));
   }, []);
   useEffect(() => saveConversations(conversations), [conversations]);
+  useEffect(() => savePattern(pattern), [pattern]);
 
   const active = conversations.find((c) => c.id === activeId);
   const selectedMessage = active?.messages.find((m) => m.id === selectedMessageId);
@@ -32,7 +42,7 @@ export function App() {
   async function send(text: string) {
     const conv: Conversation = active ?? { id: newId(), title: text.slice(0, 30), messages: [], updatedAt: Date.now() };
     const userMsg: Message = { id: newId(), role: "user", content: text };
-    const assistantMsg: Message = { id: newId(), role: "assistant", content: "", trace: emptyTrace(), pending: true };
+    const assistantMsg: Message = { id: newId(), role: "assistant", content: "", trace: emptyTrace(pattern), pending: true };
 
     // サーバーに送る履歴（エラーになった返答は除く）
     const history = [...conv.messages, userMsg]
@@ -50,12 +60,13 @@ export function App() {
     setStreaming(true);
     try {
       await streamChat(
+        pattern,
         history,
         (event) =>
           updateMessage(conv.id, assistantMsg.id, (m) => {
             if (event.type === "error") return { ...m, error: event.message };
             if (event.type === "done") return m;
-            const trace = applyEvent(m.trace ?? emptyTrace(), event);
+            const trace = applyEvent(m.trace ?? emptyTrace(pattern), event);
             return { ...m, trace, content: rootText(trace) };
           }),
         controller.signal,
@@ -92,6 +103,8 @@ export function App() {
       <ChatView
         messages={active?.messages ?? []}
         streaming={streaming}
+        pattern={pattern}
+        onPatternChange={setPattern}
         selectedMessageId={selectedMessageId}
         onSend={send}
         onStop={() => abortRef.current?.abort()}

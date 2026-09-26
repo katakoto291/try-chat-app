@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import type { CallPattern } from "../../../shared/protocol";
+import { PATTERNS, patternInfo } from "../patterns";
 import type { Message } from "../store";
 import { Markdown } from "./Markdown";
 
@@ -12,13 +14,24 @@ const EXAMPLES = [
 interface Props {
   messages: Message[];
   streaming: boolean;
+  pattern: CallPattern;
+  onPatternChange: (p: CallPattern) => void;
   selectedMessageId: string | null;
   onSend: (text: string) => void;
   onStop: () => void;
   onSelectMessage: (id: string) => void;
 }
 
-export function ChatView({ messages, streaming, selectedMessageId, onSend, onStop, onSelectMessage }: Props) {
+export function ChatView({
+  messages,
+  streaming,
+  pattern,
+  onPatternChange,
+  selectedMessageId,
+  onSend,
+  onStop,
+  onSelectMessage,
+}: Props) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -39,7 +52,11 @@ export function ChatView({ messages, streaming, selectedMessageId, onSend, onSto
         {messages.length === 0 ? (
           <div className="empty">
             <h1>何を手伝いましょうか？</h1>
-            <p className="muted">質問に応じて、司令塔エージェントが専門エージェントを呼び出します。</p>
+            <p className="muted">
+              質問に応じて、司令塔エージェントが専門エージェントを呼び出します。
+              <br />
+              下の「呼び出し方式」を切り替えて同じ質問を送ると、直接呼び出し・MCP・A2A の違いを比べられます。
+            </p>
             <div className="examples">
               {EXAMPLES.map((ex) => (
                 <button key={ex} onClick={() => onSend(ex)}>
@@ -62,7 +79,7 @@ export function ChatView({ messages, streaming, selectedMessageId, onSend, onSto
                       className={`trace-chip ${selectedMessageId === m.id ? "active" : ""}`}
                       onClick={() => onSelectMessage(m.id)}
                     >
-                      🔗 エージェント呼び出し {Object.keys(m.trace.calls).length} 回
+                      🔗 {patternInfo(m.trace.pattern).label} · エージェント呼び出し {Object.keys(m.trace.calls).length} 回
                       {m.pending ? "（実行中）" : ""} — トレースを見る
                     </button>
                   )}
@@ -72,6 +89,25 @@ export function ChatView({ messages, streaming, selectedMessageId, onSend, onSto
           ))
         )}
         <div ref={bottomRef} />
+      </div>
+
+      <div className="pattern-picker">
+        <span className="muted small">呼び出し方式</span>
+        <div className="segmented" role="radiogroup">
+          {PATTERNS.map((p) => (
+            <button
+              key={p.id}
+              role="radio"
+              aria-checked={pattern === p.id}
+              className={pattern === p.id ? "active" : ""}
+              disabled={streaming}
+              onClick={() => onPatternChange(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <span className="muted small pattern-summary">{patternInfo(pattern).summary}</span>
       </div>
 
       <div className="composer">

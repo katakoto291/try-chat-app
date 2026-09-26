@@ -1,26 +1,20 @@
 import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
-import type { ChatEvent } from "../../shared/protocol.js";
-import type { BetaMessage, BetaMessageParam, BetaTool, ModelClient } from "../llm/types.js";
-import { AGENTS, MAX_DEPTH, agentIdFromToolName, modelFor, toolNameFor, type AgentId } from "./definitions.js";
+import type { BetaMessage, BetaMessageParam, ModelClient } from "../llm/types.js";
+import { connectPeers, type PeerConnection } from "../patterns/index.js";
+import type { RunContext } from "../runs.js";
+import { AGENTS, MAX_DEPTH, agentIdFromToolName, modelFor, type AgentId } from "./definitions.js";
 
 /** 1 つのエージェントがモデルを呼ぶ最大回数（ツール呼び出しのループ上限） */
 const MAX_TURNS = 8;
-
-export interface RunContext {
-  client: ModelClient;
-  emit: (event: ChatEvent) => void;
-  signal: AbortSignal;
-  depth: number;
-  parentCallId: string | null;
-}
 
 /**
  * エージェントを 1 回実行し、最終回答のテキストを返す。
  *
  * ループの中身:
+ *   0. 呼び出せる相手に接続する（direct / MCP / A2A のどれで繋ぐかは ctx.pattern で決まる）
  *   1. モデルを呼ぶ（呼べる他エージェントを `call_<id>` ツールとして渡す）
- *   2. 返答に tool_use があれば、その相手エージェントを runAgent で「再帰的に」実行する
+ *   2. 返答に tool_use があれば、接続を通して相手エージェントを実行する
  *      （同じターンに複数あれば Promise.all で並列実行）
  *   3. 結果を tool_result として会話に追加し、1 に戻る
  *   4. tool_use がなくなったら、そのテキストが最終回答
@@ -44,15 +38,19 @@ export async function runAgent(
     model,
     task: lastUserText(messages),
     depth: ctx.depth,
+    via: ctx.depth === 0 ? "direct" : ctx.pattern,
   });
 
-  // 深さの上限に達したら、それ以上他のエージェントを呼べないようにする
-  const tools = ctx.depth < MAX_DEPTH ? def.canCall.map(agentAsTool) : [];
   const history = [...messages];
   let finalText = "";
   let isError = false;
+  let peers: PeerConnection | undefined;
 
   try {
+    // 深さの上限に達したら、それ以上他のエージェントを呼べないようにする
+    if (def.canCall.length > 0 && ctx.depth < MAX_DEPTH) peers = await connectPeers(def, callId, ctx);
+    const tools = peers?.tools ?? [];
+
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       ctx.emit({ type: "turn_start", callId, turn });
       const message = await callWithRetry(ctx, {
@@ -84,7 +82,7 @@ export async function runAgent(
       history.push({ role: "assistant", content });
 
       // ★ ここがエージェント間の呼び出し。tool_use 1 つ = 別エージェント 1 回の実行
-      const results = await Promise.all(toolUses.map((toolUse) => callSubAgent(toolUse, callId, ctx)));
+      const results = await Promise.all(toolUses.map((toolUse) => callSubAgent(toolUse, peers, callId, ctx)));
       history.push({ role: "user", content: results });
 
       if (turn === MAX_TURNS - 1) finalText ||= "（ターン数の上限に達しました）";
@@ -93,6 +91,8 @@ export async function runAgent(
     if (ctx.signal.aborted) throw err;
     finalText = `エラー: ${err instanceof Error ? err.message : String(err)}`;
     isError = true;
+  } finally {
+    await peers?.close().catch(() => {});
   }
 
   ctx.emit({ type: "agent_end", callId, output: finalText, isError, usage });
@@ -100,50 +100,29 @@ export async function runAgent(
   return finalText;
 }
 
-/** tool_use を受けて、対応するサブエージェントを実行し tool_result を返す */
+/** tool_use を受けて、接続を通して相手エージェントを実行し tool_result を返す */
 async function callSubAgent(
   toolUse: Anthropic.Beta.BetaToolUseBlock,
-  parentCallId: string,
+  peers: PeerConnection | undefined,
+  callerCallId: string,
   ctx: RunContext,
 ): Promise<Anthropic.Beta.BetaToolResultBlockParam> {
   const target = agentIdFromToolName(toolUse.name);
   const input = toolUse.input as { task?: unknown };
-  if (!target || typeof input?.task !== "string" || input.task.trim() === "") {
+  if (!peers || !target || typeof input?.task !== "string" || input.task.trim() === "") {
     return { type: "tool_result", tool_use_id: toolUse.id, is_error: true, content: `不正な呼び出しです: ${JSON.stringify(toolUse.input)}` };
   }
 
-  ctx.emit({ type: "tool_call", callId: parentCallId, toolUseId: toolUse.id, target, task: input.task });
+  ctx.emit({ type: "tool_call", callId: callerCallId, toolUseId: toolUse.id, target, task: input.task });
 
   try {
     // サブエージェントは呼び出し元の会話履歴を知らない。渡すのは task だけ
-    const output = await runAgent(target, [{ role: "user", content: input.task }], {
-      ...ctx,
-      depth: ctx.depth + 1,
-      parentCallId,
-    });
-    return { type: "tool_result", tool_use_id: toolUse.id, content: output };
+    const { text, isError } = await peers.call(target, input.task);
+    return { type: "tool_result", tool_use_id: toolUse.id, is_error: isError || undefined, content: text || "（空の応答）" };
   } catch (err) {
     if (ctx.signal.aborted) throw err;
     return { type: "tool_result", tool_use_id: toolUse.id, is_error: true, content: String(err) };
   }
-}
-
-/** 呼び出せるエージェントを、モデルから見える「ツール」の定義に変換する */
-function agentAsTool(id: AgentId): BetaTool {
-  const def = AGENTS[id];
-  return {
-    name: toolNameFor(id),
-    description: `${def.label}エージェントに仕事を依頼する。${def.description}`,
-    input_schema: {
-      type: "object",
-      properties: {
-        task: { type: "string", description: "依頼内容。相手はこれまでの会話を知らないので、前提も含めて具体的に書く" },
-      },
-      required: ["task"],
-      additionalProperties: false,
-    },
-    eager_input_streaming: true,
-  };
 }
 
 /**

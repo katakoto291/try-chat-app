@@ -1,4 +1,4 @@
-import type { AgentId, ChatEvent } from "../../shared/protocol";
+import type { AgentId, CallPattern, ChatEvent, WireMessage } from "../../shared/protocol";
 
 /** 1 回のエージェント呼び出し（トレースの木の 1 ノード） */
 export interface CallNode {
@@ -9,6 +9,8 @@ export interface CallNode {
   model: string;
   task: string;
   depth: number;
+  /** どの方式で呼び出されたか */
+  via: CallPattern;
   /** 親エージェントの何ターン目の呼び出しか */
   parentTurn: number;
   /** モデル呼び出しごとのテキスト */
@@ -21,12 +23,31 @@ export interface CallNode {
   endedAt?: number;
 }
 
-export interface Trace {
-  rootId: string | null;
-  calls: Record<string, CallNode>;
+/** 通信ログ 1 件 */
+export interface WireEntry extends WireMessage {
+  seq: number;
+  /** 実行開始からの経過ミリ秒 */
+  at: number;
+  /** 送受信したエージェント（呼び出し側）の callId */
+  callId: string;
 }
 
-export const emptyTrace = (): Trace => ({ rootId: null, calls: {} });
+export interface Trace {
+  pattern: CallPattern;
+  rootId: string | null;
+  calls: Record<string, CallNode>;
+  /** エージェント間でやり取りされたメッセージ（時系列） */
+  wires: WireEntry[];
+  startedAt: number;
+}
+
+export const emptyTrace = (pattern: CallPattern): Trace => ({
+  pattern,
+  rootId: null,
+  calls: {},
+  wires: [],
+  startedAt: Date.now(),
+});
 
 /** サーバーから届いたイベントを 1 つ反映した新しいトレースを返す */
 export function applyEvent(trace: Trace, ev: ChatEvent): Trace {
@@ -41,6 +62,7 @@ export function applyEvent(trace: Trace, ev: ChatEvent): Trace {
         model: ev.model,
         task: ev.task,
         depth: ev.depth,
+        via: ev.via,
         parentTurn: parent ? parent.turns.length - 1 : 0,
         turns: [],
         children: [],
@@ -49,7 +71,7 @@ export function applyEvent(trace: Trace, ev: ChatEvent): Trace {
       };
       const calls = { ...trace.calls, [ev.callId]: node };
       if (parent) calls[parent.callId] = { ...parent, children: [...parent.children, ev.callId] };
-      return { rootId: trace.rootId ?? ev.callId, calls };
+      return { ...trace, rootId: trace.rootId ?? ev.callId, calls };
     }
     case "turn_start":
       return update(trace, ev.callId, (n) => ({ ...n, turns: [...n.turns, ""] }));
@@ -67,6 +89,11 @@ export function applyEvent(trace: Trace, ev: ChatEvent): Trace {
         usage: ev.usage,
         endedAt: Date.now(),
       }));
+    case "wire": {
+      const { type: _type, ...wire } = ev;
+      const entry: WireEntry = { ...wire, seq: trace.wires.length, at: Date.now() - trace.startedAt };
+      return { ...trace, wires: [...trace.wires, entry] };
+    }
     default:
       return trace;
   }

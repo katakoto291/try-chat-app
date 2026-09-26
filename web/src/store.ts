@@ -1,3 +1,4 @@
+import type { CallPattern } from "../../shared/protocol";
 import type { Trace } from "./trace";
 
 export interface Message {
@@ -26,7 +27,11 @@ export function loadConversations(): Conversation[] {
     // 読み込み途中で閉じられたメッセージは「中断」として扱う
     return list.map((c) => ({
       ...c,
-      messages: c.messages.map((m) => (m.pending ? { ...m, pending: false, error: m.error ?? "中断されました" } : m)),
+      messages: c.messages.map((m) => {
+        // 古い形式のトレース（通信ログ導入前）を補う
+        const trace = m.trace && { ...m.trace, pattern: m.trace.pattern ?? "direct", wires: m.trace.wires ?? [] };
+        return m.pending ? { ...m, trace, pending: false, error: m.error ?? "中断されました" } : { ...m, trace };
+      }),
     }));
   } catch {
     return [];
@@ -42,3 +47,22 @@ export function saveConversations(list: Conversation[]) {
 }
 
 export const newId = () => crypto.randomUUID();
+
+const PATTERN_KEY = "try-chat-app:pattern";
+
+export function loadPattern(): CallPattern {
+  try {
+    const p = localStorage.getItem(PATTERN_KEY);
+    return p === "mcp" || p === "a2a" ? p : "direct";
+  } catch {
+    return "direct";
+  }
+}
+
+export function savePattern(p: CallPattern) {
+  try {
+    localStorage.setItem(PATTERN_KEY, p);
+  } catch {
+    // 保存できなくても動作に支障はない
+  }
+}
