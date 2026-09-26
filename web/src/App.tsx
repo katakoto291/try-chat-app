@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatEvent, ConfigResponse } from "../../shared/protocol";
 import { streamChatAgui } from "./agui";
-import { fetchConfig, streamChat } from "./api";
+import { UnauthorizedError, fetchConfig, logout, streamChat } from "./api";
+import { LoginScreen } from "./components/LoginScreen";
 import { ChatView } from "./components/ChatView";
 import { Sidebar } from "./components/Sidebar";
 import { TracePanel } from "./components/TracePanel";
@@ -27,8 +28,21 @@ export function App() {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const abortRef = useRef<AbortController | null>(null);
 
+  const [needsLogin, setNeedsLogin] = useState(false);
+
+  const loadConfig = () =>
+    fetchConfig()
+      .then((c) => {
+        setConfig(c);
+        setNeedsLogin(false);
+      })
+      .catch((err) => {
+        setConfig(null);
+        if (err instanceof UnauthorizedError) setNeedsLogin(true);
+      });
+
   useEffect(() => {
-    fetchConfig().then(setConfig).catch(() => setConfig(null));
+    void loadConfig();
   }, []);
   useEffect(() => saveConversations(conversations), [conversations]);
   useEffect(() => saveSettings(settings), [settings]);
@@ -82,6 +96,7 @@ export function App() {
         await streamChat(settings, history, onEvent, controller.signal);
       }
     } catch (err) {
+      if (err instanceof UnauthorizedError) setNeedsLogin(true);
       const message = controller.signal.aborted ? "停止しました" : err instanceof Error ? err.message : String(err);
       updateMessage(conv.id, assistantMsg.id, (m) => ({ ...m, error: message }));
     } finally {
@@ -91,6 +106,8 @@ export function App() {
     }
   }
 
+  if (needsLogin) return <LoginScreen onSuccess={loadConfig} />;
+
   return (
     <div className={`app ${traceOpen ? "with-trace" : ""}`}>
       <Sidebar
@@ -98,6 +115,10 @@ export function App() {
         activeId={activeId}
         config={config}
         topology={settings.topology}
+        onLogout={async () => {
+          await logout();
+          setNeedsLogin(true);
+        }}
         onSelect={(id) => {
           setActiveId(id);
           setSelectedMessageId(null);

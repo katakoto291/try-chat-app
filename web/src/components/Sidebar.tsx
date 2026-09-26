@@ -6,12 +6,13 @@ interface Props {
   activeId: string | null;
   config: ConfigResponse | null;
   topology: Topology;
+  onLogout: () => void;
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
 }
 
-export function Sidebar({ conversations, activeId, config, topology, onSelect, onNew, onDelete }: Props) {
+export function Sidebar({ conversations, activeId, config, topology, onLogout, onSelect, onNew, onDelete }: Props) {
   return (
     <nav className="sidebar">
       <button className="new-chat" onClick={onNew}>
@@ -50,6 +51,11 @@ export function Sidebar({ conversations, activeId, config, topology, onSelect, o
               </li>
             ))}
           </ul>
+          {config.auth && (
+            <button className="logout" onClick={onLogout}>
+              ログアウト
+            </button>
+          )}
         </section>
       )}
     </nav>

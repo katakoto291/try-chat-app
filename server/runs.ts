@@ -20,6 +20,8 @@ export interface Run {
   signal: AbortSignal;
   /** MCP / A2A サーバーの URL を組み立てるための、このサーバー自身の URL */
   baseUrl: string;
+  /** MCP / A2A のクライアントが使う fetch（自分自身のサーバーへのループバック） */
+  fetch: typeof fetch;
 }
 
 /** runAgent に渡すコンテキスト = 実行全体の情報 + 呼び出し階層上の位置 */

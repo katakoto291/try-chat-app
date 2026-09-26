@@ -171,12 +171,14 @@ const servers = new Map<string, { card: AgentCard; rpc: JsonRpcTransportHandler 
 /** エージェントごとの A2A サーバー（Agent Card と JSON-RPC ハンドラ）を用意する */
 export function a2aServerFor(agentId: string, baseUrl: string) {
   if (!(agentId in AGENTS) || agentId === "orchestrator") return undefined;
-  let entry = servers.get(agentId);
+  // Agent Card には URL が入るので、アクセスされたオリジンごとに用意する
+  const key = `${baseUrl}|${agentId}`;
+  let entry = servers.get(key);
   if (!entry) {
     const card = agentCard(AGENTS[agentId as AgentId], baseUrl);
     const handler = new DefaultRequestHandler(card, new InMemoryTaskStore(), new SubAgentExecutor(agentId as AgentId));
     entry = { card, rpc: new JsonRpcTransportHandler(handler) };
-    servers.set(agentId, entry);
+    servers.set(key, entry);
   }
   return entry;
 }

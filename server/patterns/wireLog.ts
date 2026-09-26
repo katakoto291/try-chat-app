@@ -29,7 +29,7 @@ export function loggingFetch(ctx: RunContext, callId: string, protocol: CallPatt
       body: pretty(reqBody),
     });
 
-    const res = await fetch(input, init);
+    const res = await ctx.fetch(input, init);
     const status = `${res.status} ${res.statusText}`.trim();
     const contentType = res.headers.get("content-type") ?? "";
 

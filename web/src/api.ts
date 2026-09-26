@@ -1,9 +1,30 @@
 import type { ChatEvent, ChatRequest, ConfigResponse } from "../../shared/protocol";
 
+/** 合言葉ログインが必要なときに投げるエラー */
+export class UnauthorizedError extends Error {
+  constructor() {
+    super("ログインが必要です");
+  }
+}
+
 export async function fetchConfig(): Promise<ConfigResponse> {
   const res = await fetch("/api/config");
+  if (res.status === 401) throw new UnauthorizedError();
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+export async function login(password: string): Promise<boolean> {
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  return res.ok;
+}
+
+export async function logout(): Promise<void> {
+  await fetch("/api/logout", { method: "POST" });
 }
 
 /**
@@ -22,6 +43,7 @@ export async function streamChat(
     body: JSON.stringify({ ...settings, messages } satisfies ChatRequest),
     signal,
   });
+  if (res.status === 401) throw new UnauthorizedError();
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
 
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();

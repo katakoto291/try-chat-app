@@ -102,5 +102,7 @@ export interface AgentInfo {
 
 export interface ConfigResponse {
   mode: "anthropic" | "mock";
+  /** 合言葉ログインが有効か */
+  auth: boolean;
   agents: AgentInfo[];
 }

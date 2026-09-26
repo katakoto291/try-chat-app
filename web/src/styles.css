@@ -665,3 +665,59 @@ button {
   overflow-x: auto;
   max-height: 420px;
 }
+
+/* ---------- ログイン ---------- */
+.login {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.login-card {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px 24px;
+  background: var(--bg-side);
+}
+.login-card h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.login-card p {
+  margin: 0;
+}
+.login-card input {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.login-card button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 600;
+}
+.login-card button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.logout {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  background: none;
+  border-radius: 8px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.logout:hover {
+  background: var(--bg-hover);
+}

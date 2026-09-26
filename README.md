@@ -34,6 +34,37 @@ npm run dev            # http://localhost:5173 を開く
 | `npm run typecheck` | サーバー・フロント両方の型チェック |
 
 `ANTHROPIC_API_KEY` が未設定なら自動でモックモードになります（`LLM_MODE=mock|anthropic` で明示指定も可）。
+`APP_PASSWORD` を設定すると、合言葉ログインが有効になります。
+
+## Vercel で公開する（無料プラン）
+
+本物の API キーを使いつつ、**合言葉を知っている自分だけ**が使える形で公開できます。
+
+1. [vercel.com](https://vercel.com) に GitHub アカウントでログインし、「Add New… → Project」からこのリポジトリを Import
+2. 設定はリポジトリの `vercel.json` に書いてあるので、Framework Preset は「Other」のままで OK
+3. 「Environment Variables」に次の 2 つを追加
+   - `ANTHROPIC_API_KEY` … Claude の API キー
+   - `APP_PASSWORD` … 合言葉（推測されにくい長めの文字列に）
+4. 「Deploy」を押し、表示された URL を開いて合言葉でログイン
+
+注意点:
+
+- **`APP_PASSWORD` を設定しないと、Vercel 上では安全のため API キーがあってもモックモードで動きます。**
+- 念のため [Anthropic Console](https://console.anthropic.com/) で月の利用上限（spend limit）も設定しておくと安心です。
+- Vercel の関数には実行時間の上限があります。`vercel.json` では `maxDuration: 300`（5 分）にしています。
+  プランの上限を超える値だとデプロイ時にエラーになるので、その場合は値を下げてください。
+- Vercel は既定のブランチを本番として公開します。別のブランチはプレビュー URL になります。
+
+### 公開用に工夫していること
+
+- **ループバック通信**: MCP / A2A のクライアントは「自分自身のサーバー」に HTTP でつなぎますが、そのリクエストは
+  ネットワークに出さず、同じプロセスの Hono アプリ（`app.fetch`）に直接渡しています（`server/app.ts`）。
+  やり取りされる HTTP リクエスト/レスポンスは同じなので通信ログはそのままで、
+  リクエストごとに別のインスタンスが動く Vercel でも 1 回のチャットが同じプロセス内で完結します。
+- **入り口の分離**: アプリ本体は `server/app.ts`。ローカルでは `server/index.ts`、Vercel では `api/index.ts` から使います。
+- `/mcp` と `/a2a/*` はログインなしでも見えますが、実行中のチャットのトレース情報がないと
+  エージェントは動かない（モデルを呼ばない）ので、外から呼ばれても料金はかかりません。
+- Hono は Cloudflare Workers や Render などでも動くので、ほかのサービスに置くこともできます。
 
 ## エージェント構成
 
@@ -132,7 +163,7 @@ AG-UI に対応したフロントエンド（CopilotKit など）なら、同じ
    4. `tool_use` がなくなったら（ハンドオフしたら）そのテキストが最終回答
 3. **`server/topologies/`** — ハンドオフと Pub/Sub の進め方
 4. **`server/patterns/`** — 直接呼び出し・MCP・A2A それぞれの接続方法（サーバー側とクライアント側の両方）
-5. **`server/index.ts`** — `POST /api/chat`（独自 SSE）と `POST /api/agui`（AG-UI）。`/mcp` と `/a2a/*` もここで公開
+5. **`server/app.ts`** — `POST /api/chat`（独自 SSE）と `POST /api/agui`（AG-UI）。`/mcp` と `/a2a/*` もここで公開
 6. **`shared/protocol.ts`** — サーバー→ブラウザのイベント型（`agent_start` / `turn_start` / `text` / `tool_call` / `agent_end` …）。`callId` と `parentCallId` で呼び出しの木が復元できる
 7. **`server/agui.ts`** と **`web/src/agui.ts`** — 上のイベントと AG-UI イベントの相互変換
 8. **`web/src/trace.ts`** と **`web/src/components/TracePanel.tsx`** — イベントから木を組み立てて表示
