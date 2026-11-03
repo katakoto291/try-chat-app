@@ -5,6 +5,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { AGENT_CARD } from "./card.js";
 import { modelId, provider, runAgent, toEvents } from "./agent.js";
 
 const app = new Hono();
@@ -17,8 +18,12 @@ app.get("/ping", (c) =>
 );
 app.get("/readiness", (c) => c.text("OK"));
 
+// 自己紹介（Agent Card）。呼ぶ側が「誰が・何をできるか」を知るために読む
+app.get("/.well-known/agent-card.json", (c) => c.json(AGENT_CARD));
+
 app.post("/invocations", async (c) => {
-  const body = await c.req.json<{ prompt?: string; stream?: boolean }>().catch(() => null);
+  const body = await c.req.json<{ prompt?: string; stream?: boolean; action?: string }>().catch(() => null);
+  if (body?.action === "describe") return c.json(AGENT_CARD); // /invocations しか届かない場所向けの自己紹介
   const prompt = body?.prompt?.trim();
   if (!prompt) return c.json({ error: 'リクエストは {"prompt": "..."} の形で送ってください' }, 400);
 

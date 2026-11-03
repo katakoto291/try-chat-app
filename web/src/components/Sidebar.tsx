@@ -51,6 +51,25 @@ export function Sidebar({ conversations, activeId, config, topology, onLogout, o
               </li>
             ))}
           </ul>
+          {config.external.agents.length > 0 && (
+            <>
+              <h3>
+                外部エージェント
+                <span className="muted small">{config.external.source === "hub" ? "agent-hub から" : "設定から"}</span>
+              </h3>
+              <ul>
+                {config.external.agents.map((a) => (
+                  <li key={a.id} title={a.available ? `${a.description}\n${a.url}` : `${a.url}\n${a.note ?? ""}`}>
+                    <span className="agent-badge agent-external" style={a.available ? undefined : { opacity: 0.4 }}>
+                      {a.name}
+                    </span>
+                    <span className="muted small">{a.available ? a.skills.join("・") : "つながりません"}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="muted small">「呼び出し」パターンのとき、司令塔が call_ext_* ツールで呼びます</p>
+            </>
+          )}
           {config.auth && (
             <button className="logout" onClick={onLogout}>
               ログアウト

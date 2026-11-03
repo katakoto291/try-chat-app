@@ -32,6 +32,7 @@ src/cli.ts     ターミナルから 1 回だけ動かす
 |---|---|
 | [`mcp-server/`](./mcp-server) | 観光スポットを検索できる MCP サーバー（ツール・リソース・プロンプト） |
 | [`trip-planner/`](./trip-planner) | MCP サーバーのツールを使って日帰りプランを作る 2 つ目のエージェント（Strands） |
+| [`agent-hub/`](./agent-hub) | エージェントの登録所。一覧・死活確認・呼び出しの中継・MCP 公開（[12 章](#12-チャットアプリから使う外部エージェントと-agent-hub)） |
 
 ---
 
@@ -298,6 +299,10 @@ Foundry ポータルの Agent Playground からも試せます。ローカルで
 - すべてのフォルダで TypeScript の型チェックは通っています。
 - Claude API の形を真似た偽のサーバーを使い、ツール呼び出し → 最終回答のループ、`/ping`・`/readiness`・`/invocations`（JSON と SSE）が動くことを確認しています。
   Foundry の Entra ID 方式（API キーの代わりに `Authorization: Bearer` を付ける）も、トークン取得だけ差し替えて確認しています。
+- チャットアプリ（モックモード）から、設定（`EXTERNAL_AGENTS`）経由と agent-hub 経由の両方で外部エージェントを呼べること、
+  トレース画面に外部エージェントとその中のツール呼び出しが表示されることを確認しています。
+  agent-hub の一覧・登録・中継（SSE）・MCP 公開・死活確認（止めたエージェントが unhealthy になる）も確認しています。
+  ハブから AgentCore のエージェントを呼ぶ部分（SigV4）は、実際の AWS では試していません。
 - MCP サーバーは、新しい形式（v2）と従来の形式（v1）の両方の MCP クライアントから使えることを確認しています。
   観光プランナーからの呼び出しは、認証なし・Bearer トークン・SigV4（署名が付くところまで）を確認しています。
   11 章の 3 つの SDK からつなぐコードも、型チェックと偽サーバーでの呼び出しを確認しています。
@@ -372,6 +377,66 @@ query({
 AgentCore には、既存の API や Lambda を MCP のツールに変換して一か所にまとめる **AgentCore Gateway** もあります。
 Foundry には、Web 検索や MCP サーバーなどのツールをまとめて 1 つの MCP の口にする **Toolbox** があります。
 ツールが増えてきたら、こうした「ツールの集約」の仕組みも検討してください。
+
+## 12. チャットアプリから使う（外部エージェントと agent-hub）
+
+このリポジトリ本体のチャットアプリ（`../server`）から、ここのエージェントを「外部エージェント」として呼べます。
+「呼び出し」パターンのとき、司令塔に `call_ext_<id>` というツールが増え、依頼内容に合えば司令塔が自分で選んで呼びます。
+
+```
+チャット画面 ─▶ 司令塔（チャットアプリの中）
+                 ├─ call_researcher など … アプリの中のエージェント
+                 └─ call_ext_trip-planner … 別のサーバーの観光プランナー ─▶ MCP サーバー
+```
+
+トレース画面には、外部エージェントが「via 外部（HTTP）」として表示されます。相手の中で何が起きたかは、
+相手が SSE で教えてくれた範囲（ツール呼び出し・文章）だけが見えます。
+
+### 各エージェントの自己紹介（Agent Card）
+
+呼ぶ側が「誰が・何をできるか」を知るため、各エージェントは自己紹介を返します（各フォルダの `src/card.ts`）。
+
+```bash
+curl localhost:8080/.well-known/agent-card.json                     # ローカルなど、パスがそのまま届く場所
+curl -X POST localhost:8080/invocations -d '{"action":"describe"}'  # AgentCore / Foundry など、/invocations しか届かない場所
+```
+
+A2A の Agent Card を参考にした形ですが、呼び出しは A2A ではなく `POST /invocations` です。
+
+### つなぎ方 1: 設定から（`EXTERNAL_AGENTS`）
+
+```bash
+# 外部エージェントを起動（それぞれ別のターミナルで）
+cd agent-samples/mcp-server   && npm run dev                   # :8000
+cd agent-samples/strands      && npm run dev                   # :8080 旅行アシスタント
+cd agent-samples/trip-planner && PORT=8081 npm run dev         # :8081 観光プランナー
+
+# チャットアプリ（リポジトリのルート）
+EXTERNAL_AGENTS=http://localhost:8080,http://localhost:8081 npm run dev
+```
+
+チャットアプリが起動後、各 URL の自己紹介を読み、サイドバーの「外部エージェント」に表示します。
+「東京で雨でも楽しめる日帰りプランを作って」と送ると、司令塔が観光プランナーを呼びます。
+
+### つなぎ方 2: agent-hub から（`AGENT_HUB_URL`）
+
+```bash
+cd agent-samples/agent-hub && HUB_AGENTS=http://localhost:8080,http://localhost:8081 npm run dev   # :8090
+
+# チャットアプリ
+AGENT_HUB_URL=http://localhost:8090 npm run dev
+```
+
+チャットアプリはハブの URL しか知りません。一覧はハブの `GET /agents`、呼び出しはハブの `POST /agents/:id/invocations` です。
+エージェントの追加・場所の変更・認証方式の違い（AgentCore の IAM など）・止まっているかどうかは、ハブが引き受けます。
+2 つのつなぎ方の違いは [agent-hub の README](./agent-hub/README.md) にまとめてあります。
+
+### 注意点
+
+- **Vercel に置いたチャットアプリからは、手元の PC（localhost）のエージェントやハブには届きません。** クラウドに置いたものの URL を設定してください。
+- 外部エージェントは、それぞれ自分の設定（`MODEL_PROVIDER` など）で Claude を呼びます。チャットアプリがモックモードでも、**外部エージェントは本物の Claude を呼ぶ**ので料金がかかります。
+- 外部エージェントを呼べるのは司令塔だけで、「呼び出し」パターンのときだけです（ハンドオフや Pub/Sub では出てきません）。
+- 外部エージェントは会話の履歴を知りません。司令塔が依頼文（task）に前提を書いて渡します。
 
 ## 参考リンク
 

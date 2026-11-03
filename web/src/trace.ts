@@ -1,12 +1,12 @@
 import type { BaseEvent } from "@ag-ui/core";
-import type { AgentId, CallPattern, ChatEvent, Topology, Via, WireMessage } from "../../shared/protocol";
+import type { CallPattern, ChatEvent, Topology, TraceAgentId, Via, WireMessage } from "../../shared/protocol";
 import type { Transport } from "./patterns";
 
 /** 1 回のエージェント呼び出し（トレースの木の 1 ノード） */
 export interface CallNode {
   callId: string;
   parentCallId: string | null;
-  agent: AgentId;
+  agent: TraceAgentId;
   label: string;
   model: string;
   task: string;

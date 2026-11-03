@@ -11,6 +11,7 @@ const VIA_LABELS: Record<Via, string> = {
   a2a: "A2A",
   handoff: "ハンドオフ",
   pubsub: "Pub/Sub",
+  external: "外部（HTTP）",
 };
 
 /**

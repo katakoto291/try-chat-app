@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Via } from "../../shared/protocol.js";
 import type { BetaMessage, BetaMessageParam, BetaTool, ModelClient } from "../llm/types.js";
+import { externalToolbox } from "../external/index.js";
 import { connectPeers } from "../patterns/index.js";
 import type { RunContext } from "../runs.js";
 import { AGENTS, MAX_DEPTH, agentIdFromToolName, modelFor, systemFor, type AgentId } from "./definitions.js";
@@ -154,17 +155,26 @@ async function callToolbox(agentId: AgentId, callId: string, ctx: RunContext): P
   // 深さの上限に達したら、それ以上他のエージェントを呼べないようにする
   if (def.call.canCall.length === 0 || ctx.depth >= MAX_DEPTH) return undefined;
   const peers = await connectPeers(def, callId, ctx);
+  // 司令塔だけは、別のサーバーで動く「外部エージェント」も呼べる（server/external/）
+  const external = agentId === "orchestrator" ? await externalToolbox(ctx, callId) : undefined;
 
   return {
-    tools: peers.tools,
+    tools: [...peers.tools, ...(external?.tools ?? [])],
     async run(toolUse) {
-      const target = agentIdFromToolName(toolUse.name);
       const input = toolUse.input as { task?: unknown };
-      if (!target || typeof input?.task !== "string" || input.task.trim() === "") {
+      const valid = typeof input?.task === "string" && input.task.trim() !== "";
+      if (external?.has(toolUse.name)) {
+        if (!valid) return { content: `不正な呼び出しです: ${JSON.stringify(toolUse.input)}`, isError: true };
+        const { text, isError } = await external.call(toolUse.name, input.task as string);
+        return { content: text, isError };
+      }
+
+      const target = agentIdFromToolName(toolUse.name);
+      if (!target || !valid) {
         return { content: `不正な呼び出しです: ${JSON.stringify(toolUse.input)}`, isError: true };
       }
       // サブエージェントは呼び出し元の会話履歴を知らない。渡すのは task だけ
-      const { text, isError } = await peers.call(target, input.task);
+      const { text, isError } = await peers.call(target, input.task as string);
       return { content: text || "（空の応答）", isError };
     },
     close: () => peers.close(),
