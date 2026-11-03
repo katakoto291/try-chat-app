@@ -1,0 +1,102 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+#
+# 3 つのサンプルを Microsoft Foundry の「hosted agents」としてデプロイする設定（Azure Developer CLI = azd 用）。
+#
+#   azd ai agent init など初回の準備は README の「Foundry にデプロイする」を参照
+#   azd deploy strands-agent          # 1 つだけデプロイ
+#   azd deploy                         # 全部デプロイ
+#
+# どのサービスも、コンテナの中で POST /invocations を受ける HTTP サーバー（ポート 8088）を動かします。
+# Claude の呼び出しは、同じ Foundry リソースにある Claude のデプロイを
+# エージェントのマネージド ID（Entra ID）で呼ぶので、API キーは置きません。
+
+requiredVersions:
+  azd: '>=1.27.1'
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.9'
+name: claude-agent-samples
+services:
+  ai-project:
+    host: azure.ai.project
+
+  # --- Strands Agents（Python）---------------------------------------------------
+  strands-agent:
+    host: azure.ai.agent
+    project: strands
+    language: python
+    docker:
+      path: Dockerfile
+      remoteBuild: true
+    uses:
+      - ai-project
+    kind: hosted
+    name: strands-agent
+    displayName: Strands Agents + Claude
+    description: Strands Agents で作った旅行アシスタント（天気・現地時刻ツール付き）
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+    env:
+      HOSTING: foundry            # app_foundry.py（azure-ai-agentserver-invocations）で起動
+      PORT: '8088'
+      MODEL_PROVIDER: foundry
+      MODEL_ID: ${CLAUDE_DEPLOYMENT_NAME=claude-opus-5-5}
+    container:
+      resources:
+        cpu: '0.5'
+        memory: 1Gi
+
+  # --- Vercel AI SDK（TypeScript）------------------------------------------------
+  vercel-ai-sdk-agent:
+    host: azure.ai.agent
+    project: vercel-ai-sdk
+    language: ts
+    docker:
+      path: Dockerfile
+      remoteBuild: true
+    uses:
+      - ai-project
+    kind: hosted
+    name: vercel-ai-sdk-agent
+    displayName: Vercel AI SDK + Claude
+    description: Vercel AI SDK（ToolLoopAgent）で作った旅行アシスタント
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+    env:
+      PORT: '8088'
+      MODEL_PROVIDER: foundry
+      MODEL_ID: ${CLAUDE_DEPLOYMENT_NAME=claude-opus-5-5}
+    container:
+      resources:
+        cpu: '0.5'
+        memory: 1Gi
+
+  # --- Claude Agent SDK（TypeScript）---------------------------------------------
+  claude-agent-sdk-agent:
+    host: azure.ai.agent
+    project: claude-agent-sdk
+    language: ts
+    docker:
+      path: Dockerfile
+      remoteBuild: true
+    uses:
+      - ai-project
+    kind: hosted
+    name: claude-agent-sdk-agent
+    displayName: Claude Agent SDK + Claude
+    description: Claude Agent SDK で作った旅行アシスタント
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+    env:
+      PORT: '8088'
+      MODEL_PROVIDER: foundry
+      MODEL_ID: ${CLAUDE_DEPLOYMENT_NAME=claude-opus-5-5}
+    container:
+      resources:
+        cpu: '1'
+        memory: 2Gi
+
+infra:
+  provider: microsoft.foundry
