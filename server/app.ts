@@ -5,6 +5,7 @@ import { stream, streamSSE } from "hono/streaming";
 import { randomUUID } from "node:crypto";
 import type { CallPattern, ChatEvent, ChatRequest, ConfigResponse, Topology } from "../shared/protocol.js";
 import { AGENTS, modelFor } from "./agents/definitions.js";
+import { listExternalAgents } from "./external/index.js";
 import { authEnabled, login, logout, requireLogin } from "./auth.js";
 import { createAguiTranslator } from "./agui.js";
 import { AnthropicModelClient } from "./llm/anthropic.js";
@@ -50,8 +51,10 @@ app.post("/api/login", login);
 app.post("/api/logout", logout);
 app.use("/api/*", requireLogin);
 
-app.get("/api/config", (c) =>
-  c.json<ConfigResponse>({
+app.get("/api/config", async (c) => {
+  // 外部エージェント（別のサーバーで動くエージェント）の一覧。自己紹介を読めなかったものも「呼べない」として返す
+  const external = await listExternalAgents();
+  return c.json<ConfigResponse>({
     mode: client.mode,
     auth: authEnabled,
     agents: Object.values(AGENTS).map((a) => ({
@@ -64,8 +67,9 @@ app.get("/api/config", (c) =>
       publishes: a.pubsub.publishes,
       model: modelFor(a.id),
     })),
-  }),
-);
+    external: { source: external.source, agents: external.agents.map((a) => a.info) },
+  });
+});
 
 function validMessages(messages: unknown): messages is ChatMessages {
   return (

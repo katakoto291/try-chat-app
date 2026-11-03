@@ -18,6 +18,16 @@ ChatGPT 風のチャット UI の裏側で、**司令塔エージェントが専
 - サーバー: Hono（Node.js）+ Anthropic TypeScript SDK
 - API キーがなくても **モックモード** で呼び出しの流れを体験できます
 
+> **全体の構成は [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) に図でまとめてあります。**
+>
+> **エージェントの作り方そのものを学びたいときは [`agent-samples/`](./agent-samples) へ。**
+> 同じエージェントを Vercel AI SDK / Strands Agents / Claude Agent SDK の 3 つで作り比べ、
+> Bedrock AgentCore Runtime と Microsoft Foundry（hosted agents）で動かすサンプルがあります。
+>
+> そこで作ったエージェントは、このチャットアプリから **外部エージェント** として呼べます。
+> `.env` に `EXTERNAL_AGENTS`（URL を直接並べる）か `AGENT_HUB_URL`（agent-hub を使う）を書くと、
+> 「呼び出し」パターンの司令塔に `call_ext_*` ツールが増えます（[詳しく](./agent-samples/README.md#12-チャットアプリから使う外部エージェントと-agent-hub)、実装は `server/external/`）。
+
 ## 使い方
 
 ```bash

@@ -1,0 +1,144 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+#
+# 3 つのサンプルを Microsoft Foundry の「hosted agents」としてデプロイする設定（Azure Developer CLI = azd 用）。
+#
+#   azd ai agent init など初回の準備は README の「Foundry にデプロイする」を参照
+#   azd deploy strands-agent          # 1 つだけデプロイ
+#   azd deploy                         # 全部デプロイ
+#
+# どのサービスも、コンテナの中で POST /invocations を受ける HTTP サーバー（ポート 8088）を動かします。
+# Claude の呼び出しは、同じ Foundry リソースにある Claude のデプロイを
+# エージェントのマネージド ID（Entra ID）で呼ぶので、API キーは置きません。
+#
+# ■ A2A について
+# Foundry では、A2A は「Foundry が用意する窓口（ゲートウェイ）」として提供されます。
+# エージェントのコードは responses プロトコルで書き、ここに次のように書くと、Foundry が A2A の窓口と
+# Agent Card（<projectEndpoint>/agents/<name>/endpoint/protocols/a2a/agentCard/v1.0）を用意します。
+#     container:
+#       protocols: [responses, a2a]
+#     agentCard:
+#       description: ...
+#       skills: [{ id: ..., name: ..., description: ..., examples: [...] }]
+# このサンプルのエージェントは invocations プロトコルなので、ここでは A2A を有効にしていません
+# （コンテナ自身は A2A を話せますが、Foundry の窓口を通して公開するには responses プロトコルへの対応が必要です）。
+
+requiredVersions:
+  azd: '>=1.27.1'
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.9'
+name: claude-agent-samples
+services:
+  ai-project:
+    host: azure.ai.project
+
+  # --- Strands Agents（TypeScript）----------------------------------------------
+  strands-agent:
+    host: azure.ai.agent
+    project: strands
+    language: ts
+    docker:
+      path: Dockerfile
+      remoteBuild: true
+    uses:
+      - ai-project
+    kind: hosted
+    name: strands-agent
+    displayName: Strands Agents + Claude
+    description: Strands Agents で作った旅行アシスタント（天気・現地時刻ツール付き）
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+    env:
+      PORT: '8088'
+      MODEL_PROVIDER: foundry
+      MODEL_ID: ${CLAUDE_DEPLOYMENT_NAME=claude-opus-5-5}
+    container:
+      resources:
+        cpu: '0.5'
+        memory: 1Gi
+
+  # --- Vercel AI SDK（TypeScript）------------------------------------------------
+  vercel-ai-sdk-agent:
+    host: azure.ai.agent
+    project: vercel-ai-sdk
+    language: ts
+    docker:
+      path: Dockerfile
+      remoteBuild: true
+    uses:
+      - ai-project
+    kind: hosted
+    name: vercel-ai-sdk-agent
+    displayName: Vercel AI SDK + Claude
+    description: Vercel AI SDK（ToolLoopAgent）で作った旅行アシスタント
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+    env:
+      PORT: '8088'
+      MODEL_PROVIDER: foundry
+      MODEL_ID: ${CLAUDE_DEPLOYMENT_NAME=claude-opus-5-5}
+    container:
+      resources:
+        cpu: '0.5'
+        memory: 1Gi
+
+  # --- Claude Agent SDK（TypeScript）---------------------------------------------
+  claude-agent-sdk-agent:
+    host: azure.ai.agent
+    project: claude-agent-sdk
+    language: ts
+    docker:
+      path: Dockerfile
+      remoteBuild: true
+    uses:
+      - ai-project
+    kind: hosted
+    name: claude-agent-sdk-agent
+    displayName: Claude Agent SDK + Claude
+    description: Claude Agent SDK で作った旅行アシスタント
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+    env:
+      PORT: '8088'
+      MODEL_PROVIDER: foundry
+      MODEL_ID: ${CLAUDE_DEPLOYMENT_NAME=claude-opus-5-5}
+    container:
+      resources:
+        cpu: '1'
+        memory: 2Gi
+
+  # --- 観光プランナー（Strands + MCP サーバー）-----------------------------------
+  # MCP サーバーは hosted agent ではないので、Azure Container Apps などに別に置き、
+  # その URL と合言葉を azd env set MCP_SERVER_URL / MCP_BEARER_TOKEN で渡します（README 参照）
+  trip-planner-agent:
+    host: azure.ai.agent
+    project: trip-planner
+    language: ts
+    docker:
+      path: Dockerfile
+      remoteBuild: true
+    uses:
+      - ai-project
+    kind: hosted
+    name: trip-planner-agent
+    displayName: 観光プランナー（MCP）
+    description: MCP サーバーの観光スポット検索ツールを使って日帰りプランを作るエージェント
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+    env:
+      PORT: '8088'
+      MODEL_PROVIDER: foundry
+      MODEL_ID: ${CLAUDE_DEPLOYMENT_NAME=claude-opus-5-5}
+      MCP_SERVER_URL: ${MCP_SERVER_URL}
+      MCP_AUTH: bearer
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN}
+    container:
+      resources:
+        cpu: '0.5'
+        memory: 1Gi
+
+infra:
+  provider: microsoft.foundry

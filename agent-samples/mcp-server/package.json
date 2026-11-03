@@ -1,0 +1,28 @@
+{
+  "name": "agent-sample-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "観光スポットを検索できる MCP サーバー（Streamable HTTP / AgentCore Runtime の MCP 方式に対応）",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "inspect": "tsx src/client.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.6",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "hono": "^4.13.16",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

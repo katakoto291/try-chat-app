@@ -9,6 +9,13 @@
 export type AgentId = "orchestrator" | "researcher" | "writer" | "coder" | "reviewer";
 
 /**
+ * トレースに出てくるエージェント。このアプリの中の 5 つに加えて、
+ * 別のサーバーで動く「外部エージェント」（agent-samples のエージェントなど）がある。
+ * 外部エージェントの名前は agent_start の label に入る。
+ */
+export type TraceAgentId = AgentId | "external";
+
+/**
  * エージェント同士をどうつなぐか。
  * - direct: 同じプロセス内の関数呼び出し（いちばん単純）
  * - mcp:    サブエージェントを MCP サーバーの「ツール」として公開し、MCP クライアントから呼ぶ
@@ -24,8 +31,8 @@ export type CallPattern = "direct" | "mcp" | "a2a";
  */
 export type Topology = "call" | "handoff" | "pubsub";
 
-/** あるエージェントがどうやって起動されたか */
-export type Via = CallPattern | "handoff" | "pubsub";
+/** あるエージェントがどうやって起動されたか（external: 外部エージェントの POST /invocations） */
+export type Via = CallPattern | "handoff" | "pubsub" | "external";
 
 /** Pub/Sub で流れるイベントの種類（トピック） */
 export type Topic =
@@ -54,7 +61,7 @@ export type ChatEvent =
       type: "agent_start";
       callId: string;
       parentCallId: string | null;
-      agent: AgentId;
+      agent: TraceAgentId;
       label: string;
       model: string;
       /** 呼び出し元から渡された依頼内容 */
@@ -100,9 +107,29 @@ export interface AgentInfo {
   model: string;
 }
 
+/**
+ * 外部エージェント（別のサーバーで動くエージェント）の情報。
+ * 各エージェントの自己紹介（Agent Card）から作る。
+ */
+export interface ExternalAgentInfo {
+  id: string;
+  name: string;
+  description: string;
+  /** エージェントのベース URL（POST <url>/invocations で呼ぶ） */
+  url: string;
+  /** 何ができるか（Agent Card の skills の名前） */
+  skills: string[];
+  /** 自己紹介を読めたか。読めなかったエージェントは呼べない */
+  available: boolean;
+  /** 読めなかった理由など */
+  note?: string;
+}
+
 export interface ConfigResponse {
   mode: "anthropic" | "mock";
   /** 合言葉ログインが有効か */
   auth: boolean;
   agents: AgentInfo[];
+  /** 外部エージェントの一覧と、それをどこから知ったか（config: 環境変数 EXTERNAL_AGENTS / hub: agent-hub） */
+  external: { source: "config" | "hub" | "none"; agents: ExternalAgentInfo[] };
 }

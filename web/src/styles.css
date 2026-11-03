@@ -14,6 +14,7 @@
   --writer: #d6851b;
   --coder: #10a37f;
   --reviewer: #d6456d;
+  --external: #5b6b82;
   color-scheme: light dark;
 }
 
@@ -191,6 +192,10 @@ button {
 }
 .agent-reviewer {
   background: var(--reviewer);
+}
+/* 別のサーバーで動く外部エージェント */
+.agent-external {
+  background: var(--external);
 }
 
 /* ---------- チャット ---------- */
@@ -542,6 +547,9 @@ button {
 }
 .via-pubsub {
   color: var(--coder);
+}
+.via-external {
+  color: var(--external);
 }
 .root-link {
   font-size: 12px;

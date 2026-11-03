@@ -65,7 +65,11 @@ export class MockModelClient implements ModelClient {
 
     // 4) 呼び出し: call_* を持っていれば、他のエージェントを呼ぶ
     const calls: { name: string; task: string }[] = [];
-    if (toolNames.has("call_coder") && isCode) {
+    // 外部エージェント（call_ext_*）: ツールの説明と依頼文に同じキーワードがあれば、そのエージェントに頼む
+    const external = pickExternalTool(tools, userText);
+    if (external) {
+      calls.push({ name: external, task: userText });
+    } else if (toolNames.has("call_coder") && isCode) {
       calls.push({ name: "call_coder", task: `次の要望に合うコードを書いてください: ${userText}` });
     } else if (toolNames.has("call_reviewer")) {
       calls.push({ name: "call_reviewer", task: `次のコードをレビューしてください:\n${SAMPLE_CODE}` });
@@ -76,7 +80,7 @@ export class MockModelClient implements ModelClient {
     }
     if (calls.length > 0) {
       return reply(
-        `専門エージェントに依頼します: ${calls.map((c) => c.name.replace("call_", "")).join("、")}`,
+        `専門エージェントに依頼します: ${calls.map((c) => c.name.replace(/^call_(ext_)?/, "")).join("、")}`,
         calls.map((c) => ({ name: c.name, input: { task: c.task } })),
       );
     }
@@ -84,6 +88,19 @@ export class MockModelClient implements ModelClient {
     // 5) 自分で直接答える
     return reply(directAnswer(system, userText));
   }
+}
+
+/** 外部エージェントに頼むか決めるキーワード（モック用の簡単な判定） */
+const EXTERNAL_KEYWORDS = ["天気", "時刻", "時間", "旅行", "観光", "プラン", "スポット"];
+
+function pickExternalTool(tools: ModelCall["tools"], userText: string): string | undefined {
+  let best: { name: string; score: number } | undefined;
+  for (const t of tools) {
+    if (!t.name.startsWith("call_ext_")) continue;
+    const score = EXTERNAL_KEYWORDS.filter((k) => userText.includes(k) && (t.description ?? "").includes(k)).length;
+    if (score > 0 && (!best || score > best.score)) best = { name: t.name, score };
+  }
+  return best?.name;
 }
 
 const SAMPLE_CODE = "```python\ndef fizzbuzz(n):\n    for i in range(1, n + 1):\n        print('FizzBuzz' if i % 15 == 0 else 'Fizz' if i % 3 == 0 else 'Buzz' if i % 5 == 0 else i)\n```";
