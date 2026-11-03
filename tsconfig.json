@@ -8,5 +8,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["server", "shared", "api"]
+  "include": ["server", "shared", "api", "e2e", "playwright.config.ts"]
 }
