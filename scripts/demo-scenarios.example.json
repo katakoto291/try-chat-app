@@ -1,0 +1,26 @@
+[
+  {
+    "name": "mcp-two-questions",
+    "topology": "call",
+    "protocol": "mcp",
+    "transport": "sse",
+    "questions": [
+      "こんにちは！あなたは何ができますか？",
+      "Python で FizzBuzz を書くコードを作って"
+    ]
+  },
+  {
+    "name": "handoff-agui",
+    "topology": "handoff",
+    "transport": "agui",
+    "questions": ["量子コンピュータについて、初心者向けに調べてわかりやすく説明して"],
+    "typingDelay": 30
+  },
+  {
+    "name": "pubsub-quick",
+    "topology": "pubsub",
+    "questions": ["TypeScript で配列を重複なくマージする関数を実装して"],
+    "showTrace": false,
+    "typingDelay": 0
+  }
+]

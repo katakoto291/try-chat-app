@@ -32,9 +32,42 @@ npm run dev            # http://localhost:5173 を開く
 | `npm run build` | フロントエンドを `dist/` にビルド |
 | `npm start` | API サーバーを起動し、`dist/` も配信（http://localhost:3000） |
 | `npm run typecheck` | サーバー・フロント両方の型チェック |
+| `npm run demo:video` | サンプル動画を撮影して `videos/` に保存（下の「サンプル動画を作る」） |
 
 `ANTHROPIC_API_KEY` が未設定なら自動でモックモードになります（`LLM_MODE=mock|anthropic` で明示指定も可）。
 `APP_PASSWORD` を設定すると、合言葉ログインが有効になります。
+
+## サンプル動画を作る
+
+Playwright でブラウザを自動操作し、「設定の切り替え → 質問の入力 → 返答 → トレースの確認」の様子を録画します。
+既定ではモックモードで動くので、API キーがなくても撮れます。動画は `videos/` に保存されます（git には含めません）。
+
+```bash
+npx playwright install chromium   # 初回だけ（撮影用のブラウザを入れる）
+
+npm run demo:video                # 用意済みのシナリオ（呼び出し×3 / ハンドオフ / Pub/Sub）をすべて撮影
+
+# 任意の質問・設定で撮る（-q を複数書くと、同じ会話の中で順番に送る）
+npm run demo:video -- -q "こんにちは" -q "Rust で素数判定を書いて" \
+  --topology call --protocol a2a --transport agui --name my-video
+
+# JSON に書いたシナリオで撮る（書き方は scripts/demo-scenarios.example.json）
+npm run demo:video -- --file scripts/demo-scenarios.example.json
+```
+
+| オプション | 内容 |
+|---|---|
+| `-q, --question <文>` | 送る質問（複数回書ける） |
+| `--topology` / `--protocol` / `--transport` | `call\|handoff\|pubsub` / `direct\|mcp\|a2a` / `sse\|agui` |
+| `--name <名前>` | 保存するファイル名（`videos/<名前>.webm`） |
+| `--no-trace` / `--typing <ms>` | トレースを見せない / 1 文字ずつ入力する間隔 |
+| `--scenario <名前>` | 用意済みのシナリオから選ぶ（`call-direct`, `call-mcp`, `call-a2a`, `handoff`, `pubsub-agui`） |
+| `--mp4` | mp4 にも変換する（ffmpeg が必要） |
+| `--real` | `.env` の API キーで本物の Claude を使う（料金がかかります） |
+| `--url <url>` | 起動済みのアプリを撮る（例: `npm run dev` 中の `http://localhost:5173`） |
+| `--width` / `--height` / `--headed` | 画面サイズ（既定 1440×900）/ ブラウザを表示して撮影 |
+
+`npm run demo:video -- --help` ですべてのオプションを確認できます。撮影の手順は `scripts/record-demo.ts` の `play()` に書いてあります。
 
 ## Vercel で公開する（無料プラン）
 

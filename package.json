@@ -8,6 +8,7 @@
     "dev": "concurrently -n api,web -c blue,green \"tsx watch --env-file-if-exists=.env server/index.ts\" \"vite\"",
     "build": "vite build",
     "start": "tsx --env-file-if-exists=.env server/index.ts",
+    "demo:video": "tsx scripts/record-demo.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json"
   },
   "engines": {
@@ -34,6 +35,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.5",
+    "playwright": "^1.63.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"
