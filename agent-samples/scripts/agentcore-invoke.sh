@@ -2,6 +2,7 @@
 # AgentCore Runtime にデプロイしたエージェントを呼び出す。
 #
 #   ./scripts/agentcore-invoke.sh <ランタイムの ARN> "東京の天気は？"
+#   ./scripts/agentcore-invoke.sh <ランタイムの ARN> --describe      # 自己紹介（Agent Card）を聞く
 #
 # AWS が受けたリクエストは、コンテナの POST /invocations にそのまま届きます。
 # 同じ SESSION_ID を使い続けると、同じコンテナ（セッション）に振り分けられます。
@@ -13,12 +14,13 @@ REGION="${AWS_REGION:-$(cut -d: -f4 <<<"$ARN")}"
 # セッション ID は 33 文字以上が必要
 SESSION_ID="${SESSION_ID:-session-$(date +%s)-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
 OUT="$(mktemp)"
+if [[ "$PROMPT" == "--describe" ]]; then PAYLOAD='{"action":"describe"}'; else PAYLOAD="$(jq -nc --arg p "$PROMPT" '{prompt: $p}')"; fi
 
 aws bedrock-agentcore invoke-agent-runtime --region "$REGION" \
   --agent-runtime-arn "$ARN" \
   --runtime-session-id "$SESSION_ID" \
   --content-type application/json \
-  --payload "$(jq -nc --arg p "$PROMPT" '{prompt: $p}')" \
+  --payload "$PAYLOAD" \
   --cli-binary-format raw-in-base64-out \
   "$OUT" >/dev/null
 

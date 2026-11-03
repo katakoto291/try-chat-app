@@ -9,6 +9,18 @@
 # どのサービスも、コンテナの中で POST /invocations を受ける HTTP サーバー（ポート 8088）を動かします。
 # Claude の呼び出しは、同じ Foundry リソースにある Claude のデプロイを
 # エージェントのマネージド ID（Entra ID）で呼ぶので、API キーは置きません。
+#
+# ■ A2A について
+# Foundry では、A2A は「Foundry が用意する窓口（ゲートウェイ）」として提供されます。
+# エージェントのコードは responses プロトコルで書き、ここに次のように書くと、Foundry が A2A の窓口と
+# Agent Card（<projectEndpoint>/agents/<name>/endpoint/protocols/a2a/agentCard/v1.0）を用意します。
+#     container:
+#       protocols: [responses, a2a]
+#     agentCard:
+#       description: ...
+#       skills: [{ id: ..., name: ..., description: ..., examples: [...] }]
+# このサンプルのエージェントは invocations プロトコルなので、ここでは A2A を有効にしていません
+# （コンテナ自身は A2A を話せますが、Foundry の窓口を通して公開するには responses プロトコルへの対応が必要です）。
 
 requiredVersions:
   azd: '>=1.27.1'

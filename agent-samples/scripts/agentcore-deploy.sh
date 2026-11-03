@@ -6,6 +6,7 @@
 #   ./scripts/agentcore-deploy.sh claude-agent-sdk
 #   ./scripts/agentcore-deploy.sh mcp-server        # MCP サーバーとして載せる（ポート 8000 の /mcp）
 #   MCP_SERVER_URL=<上で表示された URL> ./scripts/agentcore-deploy.sh trip-planner
+#   AGENT_PROTOCOL=A2A ./scripts/agentcore-deploy.sh strands    # A2A 方式で載せる（ポート 9000。Agent Card を GetAgentCard で取れる）
 #
 # 必要なもの: AWS CLI v2（最新版）、Docker（buildx）、jq、AWS の認証情報（aws configure / aws sso login など）
 #
@@ -67,21 +68,61 @@ aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name AgentSampleRuntim
   }')"
 
 echo "== 4. AgentCore Runtime: ${NAME}"
+# 一覧（list-agent-runtimes）で何のエージェントか分かるように、説明文を付けておく
+case "$SAMPLE" in
+  mcp-server)   DESCRIPTION="観光スポット検索の MCP サーバー" ;;
+  trip-planner) DESCRIPTION="観光プランナー: 天気と観光スポットを調べて日帰りプランを作る" ;;
+  *)            DESCRIPTION="旅行アシスタント（${SAMPLE}）: 都市の天気と現地時刻を調べて答える" ;;
+esac
+
 # コンテナに渡す環境変数とプロトコル
+#   HTTP … POST /invocations をポート 8080 で受ける（既定）
+#   A2A  … A2A の JSON-RPC をポート 9000 の / で受ける。Agent Card は GetAgentCard API で取れる
+#   MCP  … MCP サーバー。ポート 8000 の /mcp（mcp-server のとき）
 if [[ "$SAMPLE" == "mcp-server" ]]; then
-  # MCP サーバー: AgentCore は「ポート 8000 の /mcp」に MCP の通信を転送する。Claude は呼ばないのでモデルの設定は不要
-  PROTOCOL='{"serverProtocol":"MCP"}'
-  ENV_VARS='{"PORT":"8000"}'
+  SERVER_PROTOCOL="MCP"; PORT=8000
 else
-  # エージェント: AgentCore 上では Bedrock の Claude を「実行ロール」の権限で呼ぶ
-  PROTOCOL='{"serverProtocol":"HTTP"}'
-  # MCP_SERVER_URL を渡すと、その MCP サーバーを IAM（SigV4）で呼ぶ設定も一緒に入れる（trip-planner 用）
-  ENV_VARS="$(jq -nc --arg region "$REGION" --arg model "${MODEL_ID:-}" --arg mcp "${MCP_SERVER_URL:-}" \
-    '{MODEL_PROVIDER: "bedrock", AWS_REGION: $region, PORT: "8080"}
-     + (if $model != "" then {MODEL_ID: $model} else {} end)
-     + (if $mcp != "" then {MCP_SERVER_URL: $mcp, MCP_AUTH: "sigv4"} else {} end)')"
+  SERVER_PROTOCOL="${AGENT_PROTOCOL:-HTTP}"
+  [[ "$SERVER_PROTOCOL" == "A2A" ]] && PORT=9000 || PORT=8080
 fi
+PROTOCOL="$(jq -nc --arg p "$SERVER_PROTOCOL" '{serverProtocol: $p}')"
+
+# 環境変数。エージェントは AgentCore 上では Bedrock の Claude を「実行ロール」の権限で呼ぶ。
+# MCP_SERVER_URL を渡すと、その MCP サーバーを IAM（SigV4）で呼ぶ設定も入れる（trip-planner 用）。
+# AGENT_URL は A2A のときに Agent Card に載せる「外から見た URL」（ARN が決まってから入れる）
+env_vars() {
+  if [[ "$SAMPLE" == "mcp-server" ]]; then echo '{"PORT":"8000"}'; return; fi
+  jq -nc --arg region "$REGION" --arg port "$PORT" --arg model "${MODEL_ID:-}" --arg mcp "${MCP_SERVER_URL:-}" --arg url "${1:-}" \
+    '{MODEL_PROVIDER: "bedrock", AWS_REGION: $region, PORT: $port}
+     + (if $model != "" then {MODEL_ID: $model} else {} end)
+     + (if $mcp != "" then {MCP_SERVER_URL: $mcp, MCP_AUTH: "sigv4"} else {} end)
+     + (if $url != "" then {AGENT_URL: $url} else {} end)'
+}
 ARTIFACT="$(jq -nc --arg uri "$IMAGE" '{containerConfiguration: {containerUri: $uri}}')"
+runtime_base() { echo "https://bedrock-agentcore.${REGION}.amazonaws.com/runtimes/$(jq -rn --arg a "$1" '$a|@uri')"; }
+arn_of() { aws bedrock-agentcore-control get-agent-runtime --region "$REGION" --agent-runtime-id "$1" --query agentRuntimeArn --output text; }
+
+update_runtime() {
+  aws bedrock-agentcore-control update-agent-runtime --region "$REGION" \
+    --agent-runtime-id "$RUNTIME_ID" \
+    --agent-runtime-artifact "$ARTIFACT" \
+    --role-arn "$ROLE_ARN" \
+    --description "$DESCRIPTION" \
+    --network-configuration '{"networkMode":"PUBLIC"}' \
+    --protocol-configuration "$PROTOCOL" \
+    --environment-variables "$1" >/dev/null
+}
+
+wait_ready() {
+  echo -n "   準備ができるのを待っています"
+  for _ in $(seq 1 60); do
+    STATUS="$(aws bedrock-agentcore-control get-agent-runtime --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --query status --output text)"
+    [[ "$STATUS" == "READY" ]] && break
+    [[ "$STATUS" == *FAILED* ]] && { echo; echo "失敗しました: $STATUS" >&2; exit 1; }
+    echo -n "."; sleep 5
+  done
+  echo " ${STATUS}"
+}
 
 RUNTIME_ID="$(aws bedrock-agentcore-control list-agent-runtimes --region "$REGION" \
   --query "agentRuntimes[?agentRuntimeName=='${NAME}'].agentRuntimeId | [0]" --output text)"
@@ -90,40 +131,43 @@ if [[ "$RUNTIME_ID" == "None" || -z "$RUNTIME_ID" ]]; then
     --agent-runtime-name "$NAME" \
     --agent-runtime-artifact "$ARTIFACT" \
     --role-arn "$ROLE_ARN" \
+    --description "$DESCRIPTION" \
     --network-configuration '{"networkMode":"PUBLIC"}' \
     --protocol-configuration "$PROTOCOL" \
-    --environment-variables "$ENV_VARS" \
+    --environment-variables "$(env_vars)" \
     --query agentRuntimeId --output text)"
   echo "   作成しました: ${RUNTIME_ID}"
+  wait_ready
+  # A2A のときは、ARN が決まったので「外から見た URL」を Agent Card に載せるため、もう一度更新する
+  if [[ "$SERVER_PROTOCOL" == "A2A" ]]; then
+    update_runtime "$(env_vars "$(runtime_base "$(arn_of "$RUNTIME_ID")")/invocations/")"
+    echo "   Agent Card に載せる URL を設定しました"; wait_ready
+  fi
 else
-  aws bedrock-agentcore-control update-agent-runtime --region "$REGION" \
-    --agent-runtime-id "$RUNTIME_ID" \
-    --agent-runtime-artifact "$ARTIFACT" \
-    --role-arn "$ROLE_ARN" \
-    --network-configuration '{"networkMode":"PUBLIC"}' \
-    --protocol-configuration "$PROTOCOL" \
-    --environment-variables "$ENV_VARS" >/dev/null
+  AGENT_URL=""
+  [[ "$SERVER_PROTOCOL" == "A2A" ]] && AGENT_URL="$(runtime_base "$(arn_of "$RUNTIME_ID")")/invocations/"
+  update_runtime "$(env_vars "$AGENT_URL")"
   echo "   更新しました: ${RUNTIME_ID}"
+  wait_ready
 fi
 
-echo -n "   準備ができるのを待っています"
-for _ in $(seq 1 60); do
-  STATUS="$(aws bedrock-agentcore-control get-agent-runtime --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --query status --output text)"
-  [[ "$STATUS" == "READY" ]] && break
-  [[ "$STATUS" == *FAILED* ]] && { echo; echo "失敗しました: $STATUS" >&2; exit 1; }
-  echo -n "."; sleep 5
-done
-echo " ${STATUS}"
-
-ARN="$(aws bedrock-agentcore-control get-agent-runtime --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --query agentRuntimeArn --output text)"
+ARN="$(arn_of "$RUNTIME_ID")"
 echo
 echo "デプロイ完了: ${ARN}"
-if [[ "$SAMPLE" == "mcp-server" ]]; then
-  # AgentCore 上の MCP サーバーの URL は「ARN を URL エンコードして埋め込んだ invocations の URL」
-  MCP_URL="https://bedrock-agentcore.${REGION}.amazonaws.com/runtimes/$(jq -rn --arg a "$ARN" '$a|@uri')/invocations?qualifier=DEFAULT"
-  echo "MCP サーバーの URL: ${MCP_URL}"
-  echo "観光プランナーをこの MCP サーバーにつないでデプロイする例:"
-  echo "  MCP_SERVER_URL='${MCP_URL}' ./scripts/agentcore-deploy.sh trip-planner"
-else
-  echo "呼び出し例: ./scripts/agentcore-invoke.sh ${ARN} \"東京の天気は？\""
-fi
+case "$SERVER_PROTOCOL" in
+  MCP)
+    # AgentCore 上の MCP サーバーの URL は「ARN を URL エンコードして埋め込んだ invocations の URL」
+    MCP_URL="$(runtime_base "$ARN")/invocations?qualifier=DEFAULT"
+    echo "MCP サーバーの URL: ${MCP_URL}"
+    echo "観光プランナーをこの MCP サーバーにつないでデプロイする例:"
+    echo "  MCP_SERVER_URL='${MCP_URL}' ./scripts/agentcore-deploy.sh trip-planner"
+    ;;
+  A2A)
+    echo "Agent Card を取る:  aws bedrock-agentcore get-agent-card --region ${REGION} --agent-runtime-arn ${ARN}"
+    echo "agent-hub に登録:   HUB_AGENTS=a2a:${ARN}  （ハブが IAM の署名を付けて A2A で呼ぶ）"
+    ;;
+  *)
+    echo "呼び出し例: ./scripts/agentcore-invoke.sh ${ARN} \"東京の天気は？\""
+    echo "自己紹介:   ./scripts/agentcore-invoke.sh ${ARN} --describe"
+    ;;
+esac

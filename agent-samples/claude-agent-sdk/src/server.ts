@@ -5,8 +5,9 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { AGENT_CARD } from "./card.js";
-import { modelId, provider, runAgent, toEvents } from "./agent.js";
+import { createA2a, publicUrlOf } from "./a2a.js";
+import { agentCard } from "./card.js";
+import { modelId, provider, runAgent, streamAgent, toEvents } from "./agent.js";
 
 const app = new Hono();
 const meta = { framework: "claude-agent-sdk", provider, model: modelId };
@@ -19,11 +20,25 @@ app.get("/ping", (c) =>
 app.get("/readiness", (c) => c.text("OK"));
 
 // 自己紹介（Agent Card）。呼ぶ側が「誰が・何をできるか」を知るために読む
-app.get("/.well-known/agent-card.json", (c) => c.json(AGENT_CARD));
+app.get("/.well-known/agent-card.json", (c) => c.json(agentCard(publicUrlOf(c.req.url))));
+
+// --- A2A の窓口（JSON-RPC）。A2A のクライアントは、Agent Card に書いた URL（このサーバーの /）に POST する ---
+const a2a = createA2a({ card: agentCard, stream: streamAgent });
+app.post("/", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const result = await a2a.handle(publicUrlOf(c.req.url), body, c.req.raw.headers);
+  // SendStreamingMessage は、イベント列を SSE で返す
+  if (Symbol.asyncIterator in result) {
+    return streamSSE(c, async (sse) => {
+      for await (const event of result) await sse.writeSSE({ data: JSON.stringify(event) });
+    });
+  }
+  return c.json(result);
+});
 
 app.post("/invocations", async (c) => {
   const body = await c.req.json<{ prompt?: string; stream?: boolean; action?: string }>().catch(() => null);
-  if (body?.action === "describe") return c.json(AGENT_CARD); // /invocations しか届かない場所向けの自己紹介
+  if (body?.action === "describe") return c.json(agentCard(publicUrlOf(c.req.url))); // /invocations しか届かない場所向けの自己紹介
   const prompt = body?.prompt?.trim();
   if (!prompt) return c.json({ error: 'リクエストは {"prompt": "..."} の形で送ってください' }, 400);
 

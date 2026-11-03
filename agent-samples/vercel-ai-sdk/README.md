@@ -9,6 +9,7 @@
 3. `src/agent.ts` — エージェント本体。`ToolLoopAgent` に model・instructions・tools・stopWhen を渡すだけ
 4. `src/server.ts` — AgentCore / Foundry の約束どおりの HTTP サーバー（`/ping`・`/readiness`・`/invocations`）
 5. `src/cli.ts` — ターミナルから 1 回だけ動かす
+6. `src/card.ts`・`src/a2a.ts` — 自己紹介（A2A の Agent Card）と、A2A で呼ばれたときの窓口（4 つのサンプルで共通）
 
 ## 動かす
 

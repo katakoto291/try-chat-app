@@ -2,7 +2,7 @@
 //
 //   GET    /agents                    … 登録されているエージェントの一覧（自己紹介と状態つき）
 //   GET    /agents/:id                … 1 つのエージェントの自己紹介（Agent Card）
-//   POST   /agents                    … エージェントを登録 {"url": "..."} / {"agentCoreArn": "..."}
+//   POST   /agents                    … エージェントを登録 {"url"} / {"a2aUrl"} / {"agentCoreArn", "protocol"?}
 //   DELETE /agents/:id                … 登録を外す
 //   POST   /agents/:id/invocations    … エージェントを呼ぶ（本文と途中経過の SSE をそのまま中継する）
 //   POST   /mcp                       … ハブ自身を MCP サーバーとして公開（list_agents / call_agent）
@@ -40,7 +40,9 @@ const summary = (a: HubAgent) => ({
   lastError: a.lastError,
   // 呼ぶ側には、相手の本当の URL ではなく「ハブ経由の URL」を教える
   invokePath: `/agents/${a.id}/invocations`,
-  location: a.auth === "sigv4" ? "AgentCore Runtime" : a.registration.url,
+  // 相手の呼び方（ハブの外からは同じ形で呼べるが、中では invocations か A2A かで変換している）
+  protocol: a.protocol,
+  location: a.auth === "sigv4" ? "AgentCore Runtime" : (a.registration.url ?? a.registration.a2aUrl),
 });
 
 app.get("/agents", (c) => c.json({ agents: listAgents().map(summary) }));
@@ -54,7 +56,7 @@ app.post("/agents", async (c) => {
   const reg = (await c.req.json().catch(() => null)) as Registration | null;
   try {
     const agent = await register(reg ?? {});
-    console.log(`[hub] 登録: ${agent.id}（${agent.invokeUrl}）`);
+    console.log(`[hub] 登録: ${agent.id}（${agent.protocol} ${agent.endpoint}）`);
     return c.json(summary(agent), 201);
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
@@ -83,22 +85,28 @@ const mcp = createMcpHandler(() => createHubMcpServer());
 app.all("/mcp", (c) => mcp.fetch(c.req.raw));
 
 // --- 起動時の登録と、定期的な生存確認 ------------------------------------------
-// HUB_AGENTS=http://localhost:8080,http://localhost:8081,arn:aws:bedrock-agentcore:...
+// HUB_AGENTS=http://localhost:8080,a2a:http://localhost:8081/,arn:aws:bedrock-agentcore:...,a2a:arn:aws:bedrock-agentcore:...
+//   a2a: を付けると A2A 方式で登録する
 // まだ起動していないエージェントもあるので、登録できなかったものは定期的にやり直す
 let pending: Registration[] = (process.env.HUB_AGENTS ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean)
-  .map((item) => (item.startsWith("arn:") ? { agentCoreArn: item } : { url: item }));
+  .map((item): Registration => {
+    const a2a = item.startsWith("a2a:");
+    const value = a2a ? item.slice(4) : item;
+    if (value.startsWith("arn:")) return { agentCoreArn: value, protocol: a2a ? "a2a" : "invocations" };
+    return a2a ? { a2aUrl: value } : { url: value };
+  });
 
 async function registerPending() {
   const failed: Registration[] = [];
   for (const reg of pending) {
     await register(reg)
-      .then((a) => console.log(`[hub] 登録: ${a.id}（${a.invokeUrl}）`))
+      .then((a) => console.log(`[hub] 登録: ${a.id}（${a.protocol} ${a.endpoint}）`))
       .catch((err) => {
         failed.push(reg);
-        console.warn(`[hub] まだ登録できません（あとで再試行）: ${reg.url ?? reg.agentCoreArn}（${err instanceof Error ? err.message : err}）`);
+        console.warn(`[hub] まだ登録できません（あとで再試行）: ${reg.url ?? reg.a2aUrl ?? reg.agentCoreArn}（${err instanceof Error ? err.message : err}）`);
       });
   }
   pending = failed;

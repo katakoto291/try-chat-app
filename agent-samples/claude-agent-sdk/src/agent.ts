@@ -115,3 +115,8 @@ export function toEvents(message: SDKMessage): AgentEvent[] {
       return [];
   }
 }
+
+/** エージェントを 1 回動かし、途中経過を 4 つのサンプル共通の形で流す（A2A の窓口が使う） */
+export async function* streamAgent(prompt: string): AsyncGenerator<AgentEvent> {
+  for await (const message of runAgent(prompt)) yield* toEvents(message);
+}

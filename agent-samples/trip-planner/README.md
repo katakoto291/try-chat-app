@@ -26,6 +26,7 @@ const agent = new Agent({ model, systemPrompt, tools: [getWeatherTool, mcp] });
 2. `src/mcp.ts` — **MCP サーバーへのつなぎ方**（認証なし / Bearer トークン / AWS の SigV4）
 3. `src/agent.ts` — エージェント本体。自分のツールと MCP クライアントを並べて渡す
 4. `src/model.ts`・`src/server.ts`・`src/cli.ts` — 旅行アシスタントと同じ
+5. `src/card.ts`・`src/a2a.ts` — 自己紹介（A2A の Agent Card）と、A2A で呼ばれたときの窓口
 
 ## 動かす
 
@@ -64,3 +65,9 @@ MCP_SERVER_URL='<上で表示された URL>' ./scripts/agentcore-deploy.sh trip-
 
 Foundry の場合は、MCP サーバーを Azure Container Apps などに置いてから、
 `azd env set MCP_SERVER_URL ...` と `azd env set MCP_BEARER_TOKEN ...` を設定して `azd deploy trip-planner-agent` します。
+
+## A2A の SDK の版について
+
+`package.json` の `overrides` で、A2A の SDK（`@a2a-js/sdk`）を 1.3 系にそろえています。
+Strands の TypeScript 版は A2A の旧版（v0.3）用の SDK を前提にしていますが、このサンプル集はほかのエージェントやチャットアプリと合わせて A2A v1.0 を使うためです。
+Strands 自身にも A2A のサーバー機能（`@strands-agents/sdk/a2a`）があり、Strands だけで完結させるならそちらを使う方法もあります。

@@ -28,3 +28,14 @@ export const agent = new ToolLoopAgent({
   // ループの上限。ツールを呼び続けて止まらない事故を防ぐ
   stopWhen: stepCountIs(8),
 });
+
+/** エージェントを 1 回動かし、途中経過を 4 つのサンプル共通の形で流す（A2A の窓口が使う） */
+export async function* streamAgent(prompt: string) {
+  const result = await agent.stream({ prompt });
+  for await (const part of result.fullStream) {
+    if (part.type === "text-delta") yield { type: "text", text: part.text };
+    else if (part.type === "tool-call") yield { type: "tool_call", name: part.toolName, input: part.input };
+    else if (part.type === "error") yield { type: "error", error: String(part.error) };
+  }
+  yield { type: "result", result: await result.text };
+}

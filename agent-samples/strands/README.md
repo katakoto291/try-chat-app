@@ -10,6 +10,7 @@
 3. `src/agent.ts` — エージェント本体。`new Agent({ model, tools, systemPrompt })` と、イベントの受け取り方
 4. `src/server.ts` — AgentCore / Foundry の約束どおりの HTTP サーバー（`/ping`・`/readiness`・`/invocations`）
 5. `src/cli.ts` — ターミナルから 1 回だけ動かす
+6. `src/card.ts`・`src/a2a.ts` — 自己紹介（A2A の Agent Card）と、A2A で呼ばれたときの窓口（4 つのサンプルで共通）
 
 ## 動かす
 
@@ -34,3 +35,9 @@ npm run dev              # http://localhost:8080
     API キーがなければ、リクエストのたびに Entra ID のトークンを `Authorization: Bearer` に付けます
 - ファイル操作・シェル・HTTP リクエスト・サブエージェントなどの「すぐ使えるツール」（`@strands-agents/sdk/vended-tools/...`）も同梱されています。
 - Python 版には AgentCore 用の公式ラッパー（`bedrock-agentcore` の `BedrockAgentCoreApp`）がありますが、TypeScript では `src/server.ts` のように約束どおりのサーバーを自分で書きます。
+
+## A2A の SDK の版について
+
+`package.json` の `overrides` で、A2A の SDK（`@a2a-js/sdk`）を 1.3 系にそろえています。
+Strands の TypeScript 版は A2A の旧版（v0.3）用の SDK を前提にしていますが、このサンプル集はほかのエージェントやチャットアプリと合わせて A2A v1.0 を使うためです。
+Strands 自身にも A2A のサーバー機能（`@strands-agents/sdk/a2a`）があり、Strands だけで完結させるならそちらを使う方法もあります。

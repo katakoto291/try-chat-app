@@ -3,6 +3,8 @@
 「エージェントってどう作るの？」「Bedrock AgentCore や Microsoft Foundry で動かすってどういうこと？」を、
 **同じ題材を作り比べながら**理解するためのサンプル集です。
 
+> 全体の関係を図で見たいときは **[全体構成ガイド（docs/ARCHITECTURE.md）](../docs/ARCHITECTURE.md)** をどうぞ。
+
 題材は「天気と現地時刻を調べて答える旅行アシスタント」です。ツールは 2 つ（`get_weather` / `get_local_time`）だけにしています。
 これを次の 3 つの SDK で作り、どれも **ローカル・AgentCore Runtime・Foundry hosted agents** の 3 か所で動くようにしています。
 3 つとも **TypeScript（Node.js 22 以上）** で、ファイル構成もそろえてあるので、同じ名前のファイルを並べて見比べられます。
@@ -303,6 +305,9 @@ Foundry ポータルの Agent Playground からも試せます。ローカルで
   トレース画面に外部エージェントとその中のツール呼び出しが表示されることを確認しています。
   agent-hub の一覧・登録・中継（SSE）・MCP 公開・死活確認（止めたエージェントが unhealthy になる）も確認しています。
   ハブから AgentCore のエージェントを呼ぶ部分（SigV4）は、実際の AWS では試していません。
+- A2A: 4 つのエージェントを A2A の SDK クライアントから呼べること（Agent Card の取得、タスクの状態の変化、ツール呼び出しの通知、成果物）、
+  agent-hub に `/invocations` 方式と A2A 方式を混ぜて登録し、どちらも同じ形で呼べること、
+  チャットアプリ → ハブ → 観光プランナー（A2A）の流れを確認しています。AgentCore の A2A 方式・GetAgentCard は実際の AWS では試していません。
 - MCP サーバーは、新しい形式（v2）と従来の形式（v1）の両方の MCP クライアントから使えることを確認しています。
   観光プランナーからの呼び出しは、認証なし・Bearer トークン・SigV4（署名が付くところまで）を確認しています。
   11 章の 3 つの SDK からつなぐコードも、型チェックと偽サーバーでの呼び出しを確認しています。
@@ -438,6 +443,56 @@ AGENT_HUB_URL=http://localhost:8090 npm run dev
 - 外部エージェントを呼べるのは司令塔だけで、「呼び出し」パターンのときだけです（ハンドオフや Pub/Sub では出てきません）。
 - 外部エージェントは会話の履歴を知りません。司令塔が依頼文（task）に前提を書いて渡します。
 
+## 13. A2A 版: エージェント同士の標準のつなぎ方
+
+`/invocations` は AgentCore / Foundry がそれぞれ決めた「実行基盤への入り口」で、自己紹介の方法も決まっていません。
+そこで、各エージェントは **A2A（Agent2Agent Protocol）** でも呼べるようにしてあります。A2A は標準なので、
+A2A に対応したどのクライアントからも同じ方法で自己紹介を読み、仕事を頼めます。
+
+| | `/invocations` | A2A |
+|---|---|---|
+| 入り口 | `POST /invocations` | `POST /`（JSON-RPC） |
+| 自己紹介 | 決まりなし（このリポジトリでは `{"action":"describe"}`） | `GET /.well-known/agent-card.json`（標準の Agent Card） |
+| 途中経過 | 中身は自由（このリポジトリでは独自の SSE） | タスクの状態の変化（作業中・完了・失敗）と成果物（Artifact） |
+| AgentCore に置くと | HTTP 方式（ポート 8080） | A2A 方式（ポート 9000）。Agent Card は AWS の `GetAgentCard` API でも取れる |
+
+同じサーバーが両方に答えるので、コードはそのままで、どちらの方式でも置けます（共通部品は各サンプルの `src/a2a.ts`）。
+
+### A2A のタスクの進み方
+
+```
+task（受け付けた） → statusUpdate（作業中）
+  → statusUpdate（作業中 + ツール呼び出しの情報）… ツールを呼ぶたびに
+  → artifactUpdate（回答の文章を少しずつ）
+  → statusUpdate（完了）
+```
+
+ツール呼び出しは、A2A の「data パート」（構造化データ）として `{"type":"tool_call","name":...,"input":...}` を載せています。
+A2A の仕様で決まっている形ではなく、このサンプル集での約束です。
+
+### 試す
+
+```bash
+# エージェントの自己紹介（標準の Agent Card）
+curl localhost:8080/.well-known/agent-card.json
+
+# agent-hub に A2A 方式で登録する（a2a: を付ける）
+HUB_AGENTS=http://localhost:8080,a2a:http://localhost:8081/ npm run dev   # agent-hub で
+```
+
+ハブは、A2A 方式で登録したエージェントを A2A で呼び、結果を `/invocations` と同じ形の SSE に直して返します。
+そのため、チャットアプリは相手が A2A かどうかを気にせずに使えます。
+
+### クラウドで A2A を使う
+
+- **AgentCore**: `AGENT_PROTOCOL=A2A ./scripts/agentcore-deploy.sh strands`。A2A 方式のランタイムになり、
+  `aws bedrock-agentcore get-agent-card --agent-runtime-arn <ARN>` で Agent Card を取れます。
+  ハブには `HUB_AGENTS=a2a:<ARN>` で登録します（ハブが IAM の署名を付けて A2A で呼びます）。
+  Agent Card に載せる「外から見た URL」は、デプロイスクリプトが環境変数 `AGENT_URL` で渡します。
+- **Foundry**: Foundry の A2A は、Foundry が用意する窓口（ゲートウェイ）です。エージェントのコードは responses プロトコルで書き、
+  `azure.yaml` に `agentCard` を書くと、Foundry が A2A の窓口と Agent Card を用意します。
+  このサンプルのエージェントは invocations プロトコルなので、Foundry の A2A は使っていません（`azure.yaml` の先頭に説明があります）。
+
 ## 参考リンク
 
 - Vercel AI SDK: https://ai-sdk.dev/docs/agents/overview
@@ -448,3 +503,4 @@ AGENT_HUB_URL=http://localhost:8090 npm run dev
 - Foundry hosted agents: https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents
 - Foundry hosted agents の公式サンプル: https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents
 - MCP（Model Context Protocol）: https://modelcontextprotocol.io/
+- A2A（Agent2Agent Protocol）: https://a2a-protocol.org/

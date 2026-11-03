@@ -8,8 +8,8 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 
-# AgentCore は 8080、Foundry は 8088 で待ち受ける約束。PORT で切り替えます（Foundry 側は azure.yaml で PORT=8088 を渡す）
+# AgentCore は 8080（A2A 方式なら 9000）、Foundry は 8088 で待ち受ける約束。PORT で切り替えます（Foundry 側は azure.yaml で PORT=8088 を渡す）
 ENV PORT=8080
-EXPOSE 8080 8088
+EXPOSE 8080 8088 9000
 
 CMD ["node_modules/.bin/tsx", "src/server.ts"]

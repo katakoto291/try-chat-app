@@ -34,11 +34,22 @@ Claude Code   ──┼──▶  agent-hub  ─────────┼─ �
 |---|---|---|
 | GET | `/agents` | 一覧（名前・説明・できること・状態・呼び出し用のパス） |
 | GET | `/agents/:id` | 1 つのエージェントの自己紹介（Agent Card） |
-| POST | `/agents` | 登録。`{"url": "http://..."}` か `{"agentCoreArn": "arn:aws:bedrock-agentcore:..."}`。相手が合言葉を求めるなら `"bearerToken"` も |
+| POST | `/agents` | 登録（下の表）。相手が合言葉を求めるなら `"bearerToken"` も |
 | DELETE | `/agents/:id` | 登録を外す |
 | POST | `/agents/:id/invocations` | 呼び出しの中継。本文も、途中経過の SSE も、そのまま流す |
 | POST | `/mcp` | ハブ自身の MCP サーバー（`list_agents` / `call_agent`） |
 | GET | `/ping` | ハブ自身の死活確認（合言葉なしで呼べる） |
+
+## 登録のしかた（呼び方 2 つ × 置き場所 2 つ）
+
+| | `/invocations` 方式 | A2A 方式 |
+|---|---|---|
+| ふつうの HTTP | `{"url": "http://localhost:8080"}` | `{"a2aUrl": "http://localhost:8080/"}` |
+| AgentCore Runtime | `{"agentCoreArn": "arn:..."}` | `{"agentCoreArn": "arn:...", "protocol": "a2a"}` |
+| `HUB_AGENTS` での書き方 | `http://...` / `arn:...` | `a2a:http://...` / `a2a:arn:...` |
+
+- A2A 方式のエージェントは、標準の Agent Card（AgentCore なら AWS の `GetAgentCard` API）で自己紹介を読みます。
+- 呼ぶ側には、どちらの方式でも同じ形（`POST /agents/:id/invocations` の SSE）で見せます。A2A の相手には、ハブが A2A で頼んで結果を変換します（`src/a2a.ts`）。
 
 ## 動かす
 
@@ -59,8 +70,9 @@ curl -X POST localhost:8090/agents -H 'content-type: application/json' \
 
 1. `src/registry.ts` — 台帳。登録（自己紹介を読む）、呼び出し（相手に応じて認証を付ける）、死活確認
 2. `src/server.ts` — HTTP の API。中継は「受けた本文を相手に送って、返ってきたものをそのまま流す」だけ
-3. `src/mcp.ts` — ハブを MCP サーバーとして見せる部分
-4. `src/sigv4.ts` — AgentCore のエージェントを呼ぶための AWS の署名
+3. `src/a2a.ts` — A2A の相手を呼んで、結果を `/invocations` と同じ形に直す部分
+4. `src/mcp.ts` — ハブを MCP サーバーとして見せる部分
+5. `src/sigv4.ts` — AgentCore のエージェントを呼ぶための AWS の署名
 
 ## 作りのポイント
 
