@@ -97,5 +97,36 @@ services:
         cpu: '1'
         memory: 2Gi
 
+  # --- 観光プランナー（Strands + MCP サーバー）-----------------------------------
+  # MCP サーバーは hosted agent ではないので、Azure Container Apps などに別に置き、
+  # その URL と合言葉を azd env set MCP_SERVER_URL / MCP_BEARER_TOKEN で渡します（README 参照）
+  trip-planner-agent:
+    host: azure.ai.agent
+    project: trip-planner
+    language: ts
+    docker:
+      path: Dockerfile
+      remoteBuild: true
+    uses:
+      - ai-project
+    kind: hosted
+    name: trip-planner-agent
+    displayName: 観光プランナー（MCP）
+    description: MCP サーバーの観光スポット検索ツールを使って日帰りプランを作るエージェント
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+    env:
+      PORT: '8088'
+      MODEL_PROVIDER: foundry
+      MODEL_ID: ${CLAUDE_DEPLOYMENT_NAME=claude-opus-5-5}
+      MCP_SERVER_URL: ${MCP_SERVER_URL}
+      MCP_AUTH: bearer
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN}
+    container:
+      resources:
+        cpu: '0.5'
+        memory: 1Gi
+
 infra:
   provider: microsoft.foundry

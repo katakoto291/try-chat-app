@@ -26,6 +26,13 @@ src/cli.ts     ターミナルから 1 回だけ動かす
 > このリポジトリ本体（`../server`）は、SDK を使わずに Anthropic SDK でループを手書きしています。
 > 「フレームワークなしだとこう書く」という比較対象として、`../server/agents/runAgent.ts` も一緒に読むと理解が深まります。
 
+さらに、**ツールを MCP サーバーに切り出して、別のエージェントから使う** 例もあります（[11 章](#11-mcp-サーバーと-2-つ目のエージェント)）。
+
+| フォルダ | 中身 |
+|---|---|
+| [`mcp-server/`](./mcp-server) | 観光スポットを検索できる MCP サーバー（ツール・リソース・プロンプト） |
+| [`trip-planner/`](./trip-planner) | MCP サーバーのツールを使って日帰りプランを作る 2 つ目のエージェント（Strands） |
+
 ---
 
 ## 1. まず押さえたい「3 つの層」
@@ -288,9 +295,12 @@ Foundry ポータルの Agent Playground からも試せます。ローカルで
 
 ## 9. このリポジトリで確認したこと・していないこと
 
-- 3 サンプルとも、TypeScript の型チェックは通っています。
+- すべてのフォルダで TypeScript の型チェックは通っています。
 - Claude API の形を真似た偽のサーバーを使い、ツール呼び出し → 最終回答のループ、`/ping`・`/readiness`・`/invocations`（JSON と SSE）が動くことを確認しています。
   Foundry の Entra ID 方式（API キーの代わりに `Authorization: Bearer` を付ける）も、トークン取得だけ差し替えて確認しています。
+- MCP サーバーは、新しい形式（v2）と従来の形式（v1）の両方の MCP クライアントから使えることを確認しています。
+  観光プランナーからの呼び出しは、認証なし・Bearer トークン・SigV4（署名が付くところまで）を確認しています。
+  11 章の 3 つの SDK からつなぐコードも、型チェックと偽サーバーでの呼び出しを確認しています。
 - **本物の Claude、AWS、Azure へのデプロイは試していません。** コンテナのビルドもこの環境では未確認です。
   AWS CLI の引数は AWS の API 定義、Foundry の設定は Microsoft の公式サンプルに合わせていますが、初回は手順どおりに動くか確認しながら進めてください。
 
@@ -301,6 +311,68 @@ Foundry ポータルの Agent Playground からも試せます。ローカルで
 - **プロトコル**: AgentCore Runtime は HTTP のほかに MCP / A2A / AG-UI のサーバーも載せられます。
   このリポジトリ本体（`../server`）の MCP・A2A・AG-UI の実装と組み合わせると、「エージェント同士の呼び出し」をクラウド上で試せます。
 
+## 11. MCP サーバーと 2 つ目のエージェント
+
+ここまでの 3 サンプルは、ツールをエージェントのコードの中に書いていました。
+ツールが増えてきたり、**同じツールを複数のエージェントで使いたく** なったりしたら、ツールを MCP サーバーに切り出します。
+
+```
+ 観光プランナー（trip-planner/）               MCP サーバー（mcp-server/）
+ ┌────────────────────────────┐   tools/list   ┌──────────────────────────┐
+ │ Claude                     │ ─────────────▶ │ search_spots             │
+ │  ├ get_weather（自分で持つ）│   tools/call   │ get_spot_details         │
+ │  └ MCP のツール（借りる）   │ ─────────────▶ │（本物なら DB や社内 API）│
+ └────────────────────────────┘                └──────────────────────────┘
+          ▲ 同じ MCP サーバーを、Vercel AI SDK・Claude Agent SDK・Claude Code などからも使える
+```
+
+- **[`mcp-server/`](./mcp-server)**: 観光スポットの検索ツールを公開する MCP サーバー。MCP の 3 種類（ツール・リソース・プロンプト）を 1 つずつ持たせています
+- **[`trip-planner/`](./trip-planner)**: 2 つ目のエージェント。天気は自分のツール、観光スポットは MCP サーバーのツールで調べて、日帰りプランを作ります
+
+### 動かす
+
+```bash
+cd agent-samples/mcp-server && npm install && npm run dev        # ターミナル 1（:8000）
+cd agent-samples/trip-planner && npm install && cp .env.example .env
+npm run ask -- "雨でも楽しめる大阪の日帰りプランを作って"          # ターミナル 2
+```
+
+### 3 つの SDK それぞれでの MCP のつなぎ方
+
+どの SDK も「MCP サーバーの URL を渡すと、ツールの一覧を取ってきて Claude に渡す」部分をやってくれます。
+
+```ts
+// Strands（trip-planner/src/agent.ts）
+const mcp = new McpClient({ url: "http://localhost:8000/mcp" });
+const agent = new Agent({ model, tools: [getWeatherTool, mcp] });
+
+// Vercel AI SDK（npm install @ai-sdk/mcp）
+const mcp = await createMCPClient({ transport: { type: "http", url: "http://localhost:8000/mcp" } });
+const agent = new ToolLoopAgent({ model, tools: { ...(await mcp.tools()) }, stopWhen: stepCountIs(8) });
+// 使い終わったら await mcp.close()
+
+// Claude Agent SDK
+query({
+  prompt,
+  options: {
+    mcpServers: { spots: { type: "http", url: "http://localhost:8000/mcp" } },
+    allowedTools: ["mcp__spots__search_spots", "mcp__spots__get_spot_details"],
+  },
+});
+```
+
+### クラウドに置くとき
+
+| | Bedrock AgentCore | Azure / Foundry |
+|---|---|---|
+| MCP サーバーの置き場所 | AgentCore Runtime に **MCP サーバーとして** 置ける（プロトコル `MCP`、ポート 8000 の `/mcp`） | hosted agents には置けないので、Azure Container Apps などに置く |
+| エージェント → MCP サーバーの認証 | IAM（SigV4）。エージェントの実行ロールに `bedrock-agentcore:InvokeAgentRuntime` を付ける | Bearer トークン（学習用の合言葉。本番は OAuth / Entra ID） |
+| 手順 | `./scripts/agentcore-deploy.sh mcp-server` → 表示された URL を `MCP_SERVER_URL` にして `trip-planner` をデプロイ | Container Apps に置く → `azd env set MCP_SERVER_URL ...` → `azd deploy trip-planner-agent` |
+
+AgentCore には、既存の API や Lambda を MCP のツールに変換して一か所にまとめる **AgentCore Gateway** もあります。
+Foundry には、Web 検索や MCP サーバーなどのツールをまとめて 1 つの MCP の口にする **Toolbox** があります。
+ツールが増えてきたら、こうした「ツールの集約」の仕組みも検討してください。
+
 ## 参考リンク
 
 - Vercel AI SDK: https://ai-sdk.dev/docs/agents/overview
@@ -310,3 +382,4 @@ Foundry ポータルの Agent Playground からも試せます。ローカルで
 - Bedrock AgentCore Runtime のサービス契約: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-service-contract.html
 - Foundry hosted agents: https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents
 - Foundry hosted agents の公式サンプル: https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents
+- MCP（Model Context Protocol）: https://modelcontextprotocol.io/

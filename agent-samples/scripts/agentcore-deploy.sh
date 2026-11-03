@@ -4,6 +4,8 @@
 #   ./scripts/agentcore-deploy.sh strands
 #   ./scripts/agentcore-deploy.sh vercel-ai-sdk
 #   ./scripts/agentcore-deploy.sh claude-agent-sdk
+#   ./scripts/agentcore-deploy.sh mcp-server        # MCP サーバーとして載せる（ポート 8000 の /mcp）
+#   MCP_SERVER_URL=<上で表示された URL> ./scripts/agentcore-deploy.sh trip-planner
 #
 # 必要なもの: AWS CLI v2（最新版）、Docker（buildx）、jq、AWS の認証情報（aws configure / aws sso login など）
 #
@@ -14,7 +16,7 @@
 #   4. AgentCore Runtime を作成（2 回目以降は更新）する
 set -euo pipefail
 
-SAMPLE="${1:?使い方: $0 <strands|vercel-ai-sdk|claude-agent-sdk>}"
+SAMPLE="${1:?使い方: $0 <strands|vercel-ai-sdk|claude-agent-sdk|mcp-server|trip-planner>}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [[ -f "$ROOT/$SAMPLE/Dockerfile" ]] || { echo "サンプルが見つかりません: $SAMPLE" >&2; exit 1; }
 
@@ -49,13 +51,15 @@ if ! ROLE_ARN="$(aws iam get-role --role-name "$ROLE_NAME" --query Role.Arn --ou
   echo "   作成しました（反映を待つため 10 秒待機）"; sleep 10
 fi
 aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name AgentSampleRuntimePolicy \
-  --policy-document "$(jq -nc '{
+  --policy-document "$(jq -nc --arg acct "$ACCOUNT" '{
     Version: "2012-10-17",
     Statement: [
       { Sid: "PullImage", Effect: "Allow", Action: ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"], Resource: "arn:aws:ecr:*:*:repository/agent-samples/*" },
       { Sid: "EcrAuth", Effect: "Allow", Action: ["ecr:GetAuthorizationToken"], Resource: "*" },
       { Sid: "Logs", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogGroups", "logs:DescribeLogStreams"], Resource: "*" },
       { Sid: "Observability", Effect: "Allow", Action: ["xray:PutTraceSegments", "xray:PutTelemetryRecords", "cloudwatch:PutMetricData"], Resource: "*" },
+      { Sid: "InvokeOtherRuntimes", Effect: "Allow", Action: ["bedrock-agentcore:InvokeAgentRuntime"],
+        Resource: ("arn:aws:bedrock-agentcore:*:" + $acct + ":runtime/agent_sample_*") },
       { Sid: "InvokeClaude", Effect: "Allow",
         Action: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:ListInferenceProfiles", "bedrock:GetInferenceProfile"],
         Resource: ["arn:aws:bedrock:*:*:foundation-model/*", "arn:aws:bedrock:*:*:inference-profile/*", "arn:aws:bedrock:*:*:application-inference-profile/*"] }
@@ -63,9 +67,20 @@ aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name AgentSampleRuntim
   }')"
 
 echo "== 4. AgentCore Runtime: ${NAME}"
-# コンテナに渡す環境変数。AgentCore 上では Bedrock の Claude を「実行ロール」の権限で呼ぶ
-ENV_VARS="$(jq -nc --arg region "$REGION" --arg model "${MODEL_ID:-}" \
-  '{MODEL_PROVIDER: "bedrock", AWS_REGION: $region, PORT: "8080"} + (if $model != "" then {MODEL_ID: $model} else {} end)')"
+# コンテナに渡す環境変数とプロトコル
+if [[ "$SAMPLE" == "mcp-server" ]]; then
+  # MCP サーバー: AgentCore は「ポート 8000 の /mcp」に MCP の通信を転送する。Claude は呼ばないのでモデルの設定は不要
+  PROTOCOL='{"serverProtocol":"MCP"}'
+  ENV_VARS='{"PORT":"8000"}'
+else
+  # エージェント: AgentCore 上では Bedrock の Claude を「実行ロール」の権限で呼ぶ
+  PROTOCOL='{"serverProtocol":"HTTP"}'
+  # MCP_SERVER_URL を渡すと、その MCP サーバーを IAM（SigV4）で呼ぶ設定も一緒に入れる（trip-planner 用）
+  ENV_VARS="$(jq -nc --arg region "$REGION" --arg model "${MODEL_ID:-}" --arg mcp "${MCP_SERVER_URL:-}" \
+    '{MODEL_PROVIDER: "bedrock", AWS_REGION: $region, PORT: "8080"}
+     + (if $model != "" then {MODEL_ID: $model} else {} end)
+     + (if $mcp != "" then {MCP_SERVER_URL: $mcp, MCP_AUTH: "sigv4"} else {} end)')"
+fi
 ARTIFACT="$(jq -nc --arg uri "$IMAGE" '{containerConfiguration: {containerUri: $uri}}')"
 
 RUNTIME_ID="$(aws bedrock-agentcore-control list-agent-runtimes --region "$REGION" \
@@ -76,7 +91,7 @@ if [[ "$RUNTIME_ID" == "None" || -z "$RUNTIME_ID" ]]; then
     --agent-runtime-artifact "$ARTIFACT" \
     --role-arn "$ROLE_ARN" \
     --network-configuration '{"networkMode":"PUBLIC"}' \
-    --protocol-configuration '{"serverProtocol":"HTTP"}' \
+    --protocol-configuration "$PROTOCOL" \
     --environment-variables "$ENV_VARS" \
     --query agentRuntimeId --output text)"
   echo "   作成しました: ${RUNTIME_ID}"
@@ -86,7 +101,7 @@ else
     --agent-runtime-artifact "$ARTIFACT" \
     --role-arn "$ROLE_ARN" \
     --network-configuration '{"networkMode":"PUBLIC"}' \
-    --protocol-configuration '{"serverProtocol":"HTTP"}' \
+    --protocol-configuration "$PROTOCOL" \
     --environment-variables "$ENV_VARS" >/dev/null
   echo "   更新しました: ${RUNTIME_ID}"
 fi
@@ -103,4 +118,12 @@ echo " ${STATUS}"
 ARN="$(aws bedrock-agentcore-control get-agent-runtime --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --query agentRuntimeArn --output text)"
 echo
 echo "デプロイ完了: ${ARN}"
-echo "呼び出し例: ./scripts/agentcore-invoke.sh ${ARN} \"東京の天気は？\""
+if [[ "$SAMPLE" == "mcp-server" ]]; then
+  # AgentCore 上の MCP サーバーの URL は「ARN を URL エンコードして埋め込んだ invocations の URL」
+  MCP_URL="https://bedrock-agentcore.${REGION}.amazonaws.com/runtimes/$(jq -rn --arg a "$ARN" '$a|@uri')/invocations?qualifier=DEFAULT"
+  echo "MCP サーバーの URL: ${MCP_URL}"
+  echo "観光プランナーをこの MCP サーバーにつないでデプロイする例:"
+  echo "  MCP_SERVER_URL='${MCP_URL}' ./scripts/agentcore-deploy.sh trip-planner"
+else
+  echo "呼び出し例: ./scripts/agentcore-invoke.sh ${ARN} \"東京の天気は？\""
+fi
