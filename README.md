@@ -32,9 +32,33 @@ npm run dev            # http://localhost:5173 を開く
 | `npm run build` | フロントエンドを `dist/` にビルド |
 | `npm start` | API サーバーを起動し、`dist/` も配信（http://localhost:3000） |
 | `npm run typecheck` | サーバー・フロント両方の型チェック |
+| `npm run test:e2e` | Playwright の E2E テスト（下の「E2E テスト」） |
 
 `ANTHROPIC_API_KEY` が未設定なら自動でモックモードになります（`LLM_MODE=mock|anthropic` で明示指定も可）。
 `APP_PASSWORD` を設定すると、合言葉ログインが有効になります。
+
+## E2E テスト
+
+[Playwright](https://playwright.dev/) で、ブラウザを実際に操作してアプリ全体を確かめます。
+テスト用のサーバーはモックモードで自動的に起動するので、API キーは不要です（`.env` も読みません）。
+
+```bash
+npx playwright install chromium   # 初回だけ（テスト用のブラウザを入れる）
+npm run test:e2e                  # すべてのテストを実行
+npm run test:e2e:ui               # 画面で 1 つずつ実行・確認する（UI モード）
+npx playwright test e2e/patterns.spec.ts -g "MCP"   # 一部だけ実行
+```
+
+| ファイル | 確かめること |
+|---|---|
+| `e2e/chat.spec.ts` | 送信・停止・会話の切り替えと削除・リロード後も残るか・設定の切り替え |
+| `e2e/patterns.spec.ts` | 連携パターン × プロトコル × 画面との通信 ごとの、呼び出しツリーと通信ログ（MCP の `tools/call`、A2A の Task の状態、Pub/Sub のイベントの連鎖、AG-UI のイベントなど） |
+| `e2e/auth.spec.ts` | 合言葉ログイン（`APP_PASSWORD` を設定した 2 つ目のサーバーで確認） |
+| `e2e/api.spec.ts` | `/api/config`・Agent Card・`/api/chat` の SSE を直接呼ぶ |
+
+- サーバーの起動方法は `playwright.config.ts` に書いてあります（:3210 は合言葉なし、:3211 は合言葉あり）
+- 失敗したテストは `test-results/` にスクリーンショットとトレースが残ります。`npx playwright show-trace <trace.zip>` で操作を 1 コマずつ見られます
+- GitHub Actions（`.github/workflows/e2e.yml`）で、プルリクエストと `main` への push のたびに型チェックと E2E テストが動きます
 
 ## Vercel で公開する（無料プラン）
 

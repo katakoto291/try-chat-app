@@ -8,6 +8,8 @@
     "dev": "concurrently -n api,web -c blue,green \"tsx watch --env-file-if-exists=.env server/index.ts\" \"vite\"",
     "build": "vite build",
     "start": "tsx --env-file-if-exists=.env server/index.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json"
   },
   "engines": {
@@ -29,6 +31,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
