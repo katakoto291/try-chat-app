@@ -19,11 +19,11 @@ services:
   ai-project:
     host: azure.ai.project
 
-  # --- Strands Agents（Python）---------------------------------------------------
+  # --- Strands Agents（TypeScript）----------------------------------------------
   strands-agent:
     host: azure.ai.agent
     project: strands
-    language: python
+    language: ts
     docker:
       path: Dockerfile
       remoteBuild: true
@@ -37,7 +37,6 @@ services:
       - protocol: invocations
         version: 2.0.0
     env:
-      HOSTING: foundry            # app_foundry.py（azure-ai-agentserver-invocations）で起動
       PORT: '8088'
       MODEL_PROVIDER: foundry
       MODEL_ID: ${CLAUDE_DEPLOYMENT_NAME=claude-opus-5-5}

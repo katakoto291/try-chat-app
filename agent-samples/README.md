@@ -5,12 +5,23 @@
 
 題材は「天気と現地時刻を調べて答える旅行アシスタント」です。ツールは 2 つ（`get_weather` / `get_local_time`）だけにしています。
 これを次の 3 つの SDK で作り、どれも **ローカル・AgentCore Runtime・Foundry hosted agents** の 3 か所で動くようにしています。
+3 つとも **TypeScript（Node.js 22 以上）** で、ファイル構成もそろえてあるので、同じ名前のファイルを並べて見比べられます。
 
-| フォルダ | SDK | 言語 |
+| フォルダ | SDK | npm パッケージ |
 |---|---|---|
-| [`vercel-ai-sdk/`](./vercel-ai-sdk) | Vercel AI SDK（`ToolLoopAgent`） | TypeScript |
-| [`strands/`](./strands) | Strands Agents（AWS 製のオープンソース） | Python |
-| [`claude-agent-sdk/`](./claude-agent-sdk) | Claude Agent SDK（Anthropic 製。中身は Claude Code） | TypeScript |
+| [`vercel-ai-sdk/`](./vercel-ai-sdk) | Vercel AI SDK（`ToolLoopAgent`） | `ai` |
+| [`strands/`](./strands) | Strands Agents（AWS 製のオープンソース） | `@strands-agents/sdk` |
+| [`claude-agent-sdk/`](./claude-agent-sdk) | Claude Agent SDK（Anthropic 製。中身は Claude Code） | `@anthropic-ai/claude-agent-sdk` |
+
+各フォルダの中身は同じ構成です。
+
+```
+src/tools.ts   ツールの中身（3 つとも同じ普通の関数）
+src/model.ts   どこの Claude を使うか（Claude Agent SDK は agent.ts の中）
+src/agent.ts   エージェント本体 ← ここが SDK ごとに違う
+src/server.ts  AgentCore / Foundry 用の HTTP サーバー（3 つともほぼ同じ）
+src/cli.ts     ターミナルから 1 回だけ動かす
+```
 
 > このリポジトリ本体（`../server`）は、SDK を使わずに Anthropic SDK でループを手書きしています。
 > 「フレームワークなしだとこう書く」という比較対象として、`../server/agents/runAgent.ts` も一緒に読むと理解が深まります。
@@ -69,11 +80,11 @@
 | | Vercel AI SDK | Strands Agents | Claude Agent SDK |
 |---|---|---|---|
 | 作っているところ | Vercel | AWS（オープンソース） | Anthropic |
-| 言語 | TypeScript | Python（TS 版もあり） | TypeScript / Python |
-| エージェントの書き方 | `new ToolLoopAgent({ model, tools, stopWhen })` | `Agent(model, tools, system_prompt)` | `query({ prompt, options })` |
-| ツールの書き方 | `tool({ inputSchema: z.object(...), execute })` | `@tool` を付けた関数（docstring が説明になる） | `tool()` を「プロセス内 MCP サーバー」にまとめる |
+| 言語 | TypeScript | TypeScript / Python | TypeScript / Python |
+| エージェントの書き方 | `new ToolLoopAgent({ model, tools, stopWhen })` | `new Agent({ model, tools, systemPrompt })` | `query({ prompt, options })` |
+| ツールの書き方 | `tool({ inputSchema: z.object(...), execute })` | `tool({ name, inputSchema: z.object(...), callback })` | `tool()` を「プロセス内 MCP サーバー」にまとめる |
 | モデルの切り替え | プロバイダ（`@ai-sdk/anthropic` など）を差し替え | `AnthropicModel` / `BedrockModel` を差し替え | 環境変数（`CLAUDE_CODE_USE_BEDROCK` など） |
-| 得意なこと | Web アプリ（Next.js など）との一体化、多数のモデル | AWS との連携、マルチエージェント | **ファイル操作・Bash・Web 検索などの組み込みツール**、長い作業 |
+| 得意なこと | Web アプリ（Next.js など）との一体化、多数のモデル | AWS との連携、マルチエージェント、すぐ使えるツール集 | **ファイル操作・Bash・Web 検索などの組み込みツール**、長い作業 |
 | 中身 | ライブラリ | ライブラリ | Claude Code を子プロセスとして起動 |
 
 ポイント:
@@ -95,18 +106,14 @@ AgentCore Runtime も Foundry hosted agents も、やることは **「コンテ
 | ポート | 8080 | 8088（`PORT` で変更可） |
 | CPU | **ARM64**（イメージを arm64 でビルドする） | 指定なし |
 | セッション | ヘッダー `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`。セッションごとに分離された環境（microVM）で動く | クエリ `agent_session_id`（ヘッダー `x-agent-session-id` で返る） |
-| 公式の Python SDK | `bedrock-agentcore`（`BedrockAgentCoreApp`） | `azure-ai-agentserver-invocations`（`InvocationAgentServerHost`） |
+| 公式の補助ライブラリ（Python 用） | `bedrock-agentcore`（`BedrockAgentCoreApp`） | `azure-ai-agentserver-invocations`（`InvocationAgentServerHost`） |
 | デプロイ | ECR に push → `create-agent-runtime`（`scripts/agentcore-deploy.sh`） | Azure Developer CLI（`azd deploy`、`azure.yaml`） |
 | Claude を呼ぶ権限 | ランタイムの **実行ロール（IAM）** | エージェントの **マネージド ID（Entra ID）** |
 
-違いはヘルスチェックのパスとポート番号くらいです。そこで、このサンプルでは:
-
-- **TypeScript の 2 つ**は、`/ping` と `/readiness` の両方に答える小さなサーバー（Hono）を自分で書き、`PORT` だけ切り替えています（`src/server.ts`）。
-  「約束を自分で満たすとこうなる」という例です。
-- **Strands（Python）**は、各社の公式 SDK を使った入り口を 2 つ用意し（`app_agentcore.py` / `app_foundry.py`）、`HOSTING` で選びます。
-  「エージェント本体（`agent.py`）は 1 行も変えずに、入り口だけ差し替える」という例です。
-
-どちらも **1 つのコンテナイメージで両方の基盤に載せられる** ようにしてあります。
+違いはヘルスチェックのパスとポート番号くらいです。そこで、このサンプルでは `/ping` と `/readiness` の両方に答える
+小さなサーバー（Hono）を `src/server.ts` に書き、ポートは環境変数 `PORT` で切り替えています。
+これで **1 つのコンテナイメージをそのまま両方の基盤に載せられます**。
+（公式の補助ライブラリは Python 用なので、TypeScript では約束を自分で満たします。といっても数十行です。）
 
 ### リクエストとレスポンス（3 サンプル共通）
 
@@ -134,32 +141,21 @@ data: {"type":"done","framework":"vercel-ai-sdk",...}
 
 ### 準備
 
-- Node.js 22 以上（TypeScript の 2 サンプル）/ Python 3.12 以上（Strands）
+- Node.js 22 以上
 - 使う Claude の認証情報（どれか 1 つ）
   - **Anthropic API**: `ANTHROPIC_API_KEY`
   - **Bedrock**: AWS の認証情報（`aws configure` や `aws sso login`）と、Bedrock コンソールで Anthropic のモデルを有効化しておくこと
   - **Foundry**: Foundry のリソース名（`ANTHROPIC_FOUNDRY_RESOURCE`）と、Claude のデプロイ。API キー（`ANTHROPIC_FOUNDRY_API_KEY`）か `az login`
 
-### TypeScript（vercel-ai-sdk / claude-agent-sdk）
+### 実行（3 サンプルとも同じ手順）
 
 ```bash
-cd agent-samples/vercel-ai-sdk        # または claude-agent-sdk
+cd agent-samples/strands              # または vercel-ai-sdk / claude-agent-sdk
 npm install
 cp .env.example .env                  # MODEL_PROVIDER と認証情報を記入
 npm run ask -- "東京とロンドンの天気と時刻を教えて"   # 1 回だけ実行
 npm run dev                           # http://localhost:8080 で HTTP サーバーを起動
-```
-
-### Python（strands）
-
-```bash
-cd agent-samples/strands
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env                  # MODEL_PROVIDER と認証情報を記入
-python cli.py "東京とロンドンの天気と時刻を教えて"   # 1 回だけ実行
-python main.py                        # AgentCore 用の入り口（:8080）
-HOSTING=foundry python main.py        # Foundry 用の入り口（:8088）
+PORT=8088 npm run dev                 # Foundry と同じポートで起動したいとき
 ```
 
 ### サーバーを試す
@@ -273,8 +269,8 @@ Foundry ポータルの Agent Playground からも試せます。ローカルで
 
 ### 補足
 
-- Microsoft の公式サンプルは Python と C# だけです。TypeScript の 2 つは「Dockerfile を指定してコンテナとして載せる」形にしていますが、
-  公式に例のない構成なので、azd のバージョンによっては `azure.yaml` の調整が必要になるかもしれません。
+- Microsoft の公式サンプルは Python と C# だけです。このサンプルは「Dockerfile を指定してコンテナとして載せる」形にしていますが、
+  TypeScript は公式に例のない構成なので、azd のバージョンによっては `azure.yaml` の調整が必要になるかもしれません。
 - Foundry の Claude は、デプロイ時に「Azure 上で動かす」か「Anthropic の基盤で動かす」かを選べます（hosting option）。
 
 ---
@@ -284,16 +280,17 @@ Foundry ポータルの Agent Playground からも試せます。ローカルで
 - **会話は覚えていません。** どのサンプルも 1 回のリクエストで完結します（リクエストごとに新しいエージェントを作ります）。
   会話を続けるには、セッション ID ごとに履歴を保存して次の呼び出しに渡す必要があります（AgentCore Memory や Foundry の会話機能などを使う）。
 - **料金**: 既定のモデルは `claude-opus-5-5` です。試すだけなら `MODEL_ID` で `claude-sonnet-5-5` や `claude-haiku-5-5`（Bedrock なら `us.anthropic.claude-haiku-5-5` など）にすると安くなります。
-- **ループの上限**: ツールを呼び続けて止まらない事故を防ぐため、上限（Vercel AI SDK は `stopWhen`、Claude Agent SDK は `maxTurns`）を付けています。
+- **ループの上限**: ツールを呼び続けて止まらない事故を防ぐため、Vercel AI SDK は `stopWhen`、Claude Agent SDK は `maxTurns` で上限を付けています。
+  Strands の TypeScript 版には同じ形の設定が見当たらなかったので付けていません（必要ならフックやプラグインで止める形になります）。
 - **Claude Agent SDK の組み込みツール**: サーバーに置くエージェントで Bash やファイル書き込みを許すと、プロンプト次第で何でもできてしまいます。
   使うときは `tools` / `allowedTools` で必要なものだけに絞り、隔離された環境（AgentCore のセッションごとの microVM など）で動かしてください。
 - **公開範囲**: AgentCore / Foundry にデプロイしたエージェントは、既定ではそれぞれのクラウドの認証（IAM / Entra ID）がないと呼べません。
 
 ## 9. このリポジトリで確認したこと・していないこと
 
-- 3 サンプルとも、型チェック（TypeScript）と構文チェック（Python）は通っています。
-- Claude API の形を真似た偽のサーバーを使い、ツール呼び出し → 最終回答のループ、`/ping`・`/readiness`・`/invocations`（JSON と SSE）、
-  Strands の 2 つの入り口が動くことを確認しています。
+- 3 サンプルとも、TypeScript の型チェックは通っています。
+- Claude API の形を真似た偽のサーバーを使い、ツール呼び出し → 最終回答のループ、`/ping`・`/readiness`・`/invocations`（JSON と SSE）が動くことを確認しています。
+  Foundry の Entra ID 方式（API キーの代わりに `Authorization: Bearer` を付ける）も、トークン取得だけ差し替えて確認しています。
 - **本物の Claude、AWS、Azure へのデプロイは試していません。** コンテナのビルドもこの環境では未確認です。
   AWS CLI の引数は AWS の API 定義、Foundry の設定は Microsoft の公式サンプルに合わせていますが、初回は手順どおりに動くか確認しながら進めてください。
 

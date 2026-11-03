@@ -65,7 +65,7 @@ aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name AgentSampleRuntim
 echo "== 4. AgentCore Runtime: ${NAME}"
 # コンテナに渡す環境変数。AgentCore 上では Bedrock の Claude を「実行ロール」の権限で呼ぶ
 ENV_VARS="$(jq -nc --arg region "$REGION" --arg model "${MODEL_ID:-}" \
-  '{MODEL_PROVIDER: "bedrock", AWS_REGION: $region, HOSTING: "agentcore", PORT: "8080"} + (if $model != "" then {MODEL_ID: $model} else {} end)')"
+  '{MODEL_PROVIDER: "bedrock", AWS_REGION: $region, PORT: "8080"} + (if $model != "" then {MODEL_ID: $model} else {} end)')"
 ARTIFACT="$(jq -nc --arg uri "$IMAGE" '{containerConfiguration: {containerUri: $uri}}')"
 
 RUNTIME_ID="$(aws bedrock-agentcore-control list-agent-runtimes --region "$REGION" \

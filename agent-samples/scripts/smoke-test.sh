@@ -4,8 +4,7 @@
 #   ./scripts/smoke-test.sh                       # http://localhost:8080
 #   ./scripts/smoke-test.sh http://localhost:8088
 #
-# TypeScript の 2 サンプルは /ping と /readiness の両方に答えます。
-# Strands は入り口ごとに公式 SDK を使うので、AgentCore 用（:8080）は /readiness が 404、Foundry 用（:8088）は /ping がありません。
+# どのサンプルも /ping（AgentCore 用）と /readiness（Foundry 用）の両方に答えます。
 set -euo pipefail
 
 BASE="${1:-http://localhost:8080}"
