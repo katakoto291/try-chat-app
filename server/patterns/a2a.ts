@@ -166,6 +166,11 @@ function agentMessage(text: string, taskId: string, contextId: string): Message 
   };
 }
 
+/**
+ * baseUrl ごとのキャッシュ。SELF_URL 未設定時は baseUrl が Host ヘッダーで決まり、
+ * /a2a/* はログイン不要なので、Host を変えたリクエストで無制限に増えないよう上限を設ける。
+ */
+const MAX_SERVERS = 32;
 const servers = new Map<string, { card: AgentCard; rpc: JsonRpcTransportHandler }>();
 
 /** エージェントごとの A2A サーバー（Agent Card と JSON-RPC ハンドラ）を用意する */
@@ -174,11 +179,16 @@ export function a2aServerFor(agentId: string, baseUrl: string) {
   // Agent Card には URL が入るので、アクセスされたオリジンごとに用意する
   const key = `${baseUrl}|${agentId}`;
   let entry = servers.get(key);
-  if (!entry) {
+  if (entry) {
+    // 最近使ったものを末尾に移す（Map の挿入順を LRU として使う）
+    servers.delete(key);
+    servers.set(key, entry);
+  } else {
     const card = agentCard(AGENTS[agentId as AgentId], baseUrl);
     const handler = new DefaultRequestHandler(card, new InMemoryTaskStore(), new SubAgentExecutor(agentId as AgentId));
     entry = { card, rpc: new JsonRpcTransportHandler(handler) };
     servers.set(key, entry);
+    if (servers.size > MAX_SERVERS) servers.delete(servers.keys().next().value!);
   }
   return entry;
 }

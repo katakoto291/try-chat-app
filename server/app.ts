@@ -35,6 +35,21 @@ const PATTERNS: CallPattern[] = ["direct", "mcp", "a2a"];
 
 type ChatMessages = ChatRequest["messages"];
 
+/** SELF_URL を起動時に 1 回だけ解決する。不正な値なら警告して無視する */
+const SELF_URL: string | undefined = (() => {
+  const raw = process.env.SELF_URL?.trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("unsupported protocol");
+    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    console.warn(`SELF_URL="${raw}" は URL として不正なため無視します（例: https://your-app.vercel.app）。`);
+    return undefined;
+  }
+})();
+const SELF_BASE_PATH = SELF_URL ? new URL(SELF_URL).pathname.replace(/\/+$/, "") : "";
+
 export const app = new Hono();
 
 /**
@@ -43,7 +58,16 @@ export const app = new Hono();
  * こうしておくと、Vercel のようにリクエストごとに別のインスタンスが動く環境でも、
  * 同じ実行（run）の中で完結する。
  */
-const loopbackFetch: typeof fetch = (input, init) => Promise.resolve(app.fetch(new Request(input, init)));
+const loopbackFetch: typeof fetch = (input, init) => {
+  const req = new Request(input, init);
+  // SELF_URL にパス（例: /chat）があっても、アプリのルートは / 始まりなので外して渡す
+  const url = new URL(req.url);
+  if (SELF_BASE_PATH && (url.pathname === SELF_BASE_PATH || url.pathname.startsWith(`${SELF_BASE_PATH}/`))) {
+    url.pathname = url.pathname.slice(SELF_BASE_PATH.length) || "/";
+    return Promise.resolve(app.fetch(new Request(url, req)));
+  }
+  return Promise.resolve(app.fetch(req));
+};
 
 // ───────── 合言葉ログイン（APP_PASSWORD を設定したときだけ有効） ─────────
 app.post("/api/login", login);
@@ -126,7 +150,7 @@ app.post("/api/chat", async (c) => {
     sse.onAbort(() => controller.abort());
     const out = orderedWriter((data) => sse.writeSSE({ data }));
 
-    await runChat({ topology, pattern, messages }, (event) => out.push(JSON.stringify(event)), controller.signal, originOf(c.req.url));
+    await runChat({ topology, pattern, messages }, (event) => out.push(JSON.stringify(event)), controller.signal, baseUrlOf(c.req.url));
     await out.flush();
   });
 });
@@ -157,7 +181,7 @@ app.post("/api/agui", async (c) => {
 
     const agui = createAguiTranslator(input.threadId, input.runId, (event: BaseEvent) => out.push(encoder.encode(event)));
     agui.start();
-    await runChat({ topology, pattern, messages }, agui.handle, controller.signal, originOf(c.req.url));
+    await runChat({ topology, pattern, messages }, agui.handle, controller.signal, baseUrlOf(c.req.url));
     await out.flush();
   });
 });
@@ -167,12 +191,12 @@ app.all("/mcp", (c) => handleMcpRequest(c.req.raw));
 
 // ───────── パターン 3: A2A サーバー（エージェントごとに Agent Card と JSON-RPC 窓口） ─────────
 app.get("/a2a/:agent/.well-known/agent-card.json", (c) => {
-  const server = a2aServerFor(c.req.param("agent"), originOf(c.req.url));
+  const server = a2aServerFor(c.req.param("agent"), baseUrlOf(c.req.url));
   return server ? c.json(server.card) : c.notFound();
 });
 
 app.post("/a2a/:agent", async (c) => {
-  const server = a2aServerFor(c.req.param("agent"), originOf(c.req.url));
+  const server = a2aServerFor(c.req.param("agent"), baseUrlOf(c.req.url));
   if (!server) return c.notFound();
   const body = await c.req.json().catch(() => null);
   const result = await handleA2aRpc(server.rpc, body, c.req.raw.headers);
@@ -187,19 +211,11 @@ app.post("/a2a/:agent", async (c) => {
 });
 
 /**
- * Agent Card などに載せる、このサーバー自身の URL。
- * SELF_URL が空・不正なときは、アクセスされた URL から決める
+ * Agent Card などに載せる、このサーバー自身の URL（末尾の / なし）。
+ * SELF_URL が設定されていればそれを使う（リバースプロキシ配下のパス /chat なども保持する）。
+ * 未設定・不正なときは、アクセスされた URL のオリジンから決める
  * （.env.example をそのまま使うと SELF_URL= が空文字で入るため）。
  */
-function originOf(url: string): string {
-  for (const candidate of [process.env.SELF_URL?.trim(), url]) {
-    if (!candidate) continue;
-    try {
-      const origin = new URL(candidate).origin;
-      if (origin !== "null") return origin;
-    } catch {
-      // 不正な URL は無視して次の候補へ
-    }
-  }
-  return "http://localhost";
+function baseUrlOf(requestUrl: string): string {
+  return SELF_URL ?? new URL(requestUrl).origin;
 }
