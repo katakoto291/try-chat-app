@@ -74,7 +74,7 @@ export async function handleMcpRequest(req: Request): Promise<Response> {
 
 export async function connectMcp(caller: AgentDefinition, callerCallId: string, ctx: RunContext): Promise<PeerConnection> {
   const client = new Client({ name: `${caller.id}-agent`, version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(new URL("/mcp", ctx.baseUrl), {
+  const transport = new StreamableHTTPClientTransport(new URL(`${ctx.baseUrl}/mcp`), {
     fetch: loggingFetch(ctx, callerCallId, "mcp"),
   });
 
